@@ -33,10 +33,9 @@ multisubstitute {
 }
 
 s6-tcpserver4-socketbinder ${Address} ${Port}
-#s6-applyuidgid -U -z
+#s6-applyuidgid -U -z 
+# dirty hack to apply login.class. 
 su -m -s /command/exec ${UidGidUser}
-foreground { /usr/bin/id }
-foreground { /bin/sh -c "ulimit -a" }
 s6-tcpserver4d -v ${TCPv} -c ${MaxSmtpd} -C ${MaxSameSmtpd}
 s6-tcpserver-access  -W -r -t ${AccessTimout} -v 3
 export ${LaunchPath} PATH

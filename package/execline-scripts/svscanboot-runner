@@ -1,0 +1,140 @@
+#!/command/execlineb -S1
+
+#set a known path
+	/command/export PATH /command
+	/command/importas path PATH
+#messing with PATH is bad. use LAUNCHPATH to affect the thiings
+
+	backtick -E StartTime { /bin/date }
+	getpid mypid importas -Su mypid
+
+#name some fds
+	redirfd -wf DEVNULL /dev/null
+
+#set up some emergency logging
+	define tmpdir /tmp/${1}/svscanboot/${0}
+	multidefine "0 1 2 ${tmpdir}/out ${tmpdir}/err"
+		{ stdin stdout stderr altout alterr }
+
+	foreground { /bin/mkdir -p $tmpdir }
+	foreground { /sbin/mkfifo -m 600 $altout $alterr }
+	fdreserve 4 foreground { printenv } multisubstitute {
+		importas -u	r_out	FD0
+		importas -u	r_err	FD1
+		importas -u	w_out	FD2
+		importas -u	w_err	FD3
+		importas -u	null	DEVNULL
+	}
+	redirfd -rnb $r_err $alterr
+	redirfd -wnb $w_err $alterr
+	fdswap $stderr $w_err
+	redirfd -rnb $r_out $altout
+	redirfd -wnb $w_out $altout
+	fdswap $stdout $w_out
+
+#record the device
+	/command/export SUPERVISE_TAG ${1}
+
+#set a known log user
+	fdswap $stderr $null
+		backtick -D syslogd LOGUSER { /usr/bin/id -un _syslogd }
+	fdswap $null $stderr
+	importas syslogd LOGUSER
+	fdswap $stderr $null
+		backtick -D $syslogd LOGUSER { /usr/bin/id -un s6_log }
+	fdswap $null $stderr
+	importas defloguser LOGUSER
+	fdswap $stderr $null
+		backtick -D $defloguser LOGUSER { /usr/bin/id -un ${1}_log }
+	fdswap $null $stderr
+	importas loguser LOGUSER
+
+#work oout what we were called as
+	backtick -E dirname { /usr/bin/dirname ${0} }
+	backtick SERVICEDIR { /usr/bin/realpath ${dirname} }
+	importas homedir SERVICEDIR
+
+#set the intial defaults
+	export LOGDIR /var/log/${1}/${homedir}/
+	export LOGUSER ${1}_log
+
+#read defaults
+	s6-envdir -I /etc/svscanboot/ENV
+#read overrides based on call
+	s6-envdir -I /etc/svscanboot/ENV.${1}
+	s6-envdir -I ${0}.ENV
+#read overrides based on updated settings
+	importas -D ${homedir} cur_dir SERVICEDIR
+		s6-envdir -I /etc/svscanboot/${cur_dir}/ENV
+	importas -D $1 cur_tag SUPERVISE_TAG
+		s6-envdir -I /etc/svscanboot/ENV-tag.${cur_tag}
+	importas -D ${cur_dir} new_dir SERVICEDIR
+		s6-envdir -I ${cur_dir}/.ENV
+
+# get the path, for right or wrong
+	importas -D ${path} cur_path PATH
+
+# try the suggested log user
+	importas tryloguser LOGUSER
+	fdswap $stderr $null
+	backtick -D $defloguser LOGUSER { /usr/bin/id -un ${tryloguser} }
+	fdswap $null $stderr
+
+#okay, now keep those promises:
+	multisubstitute {
+		# available for children:
+		importas -D ${cur_dir} superdir SERVICEDIR
+		importas -i logs LOGDIR
+		importas -i reporter LOGUSER
+		importas -D ${1} tag SUPERVISE_TAG
+
+		#internal use:
+		importas -uD ${cur_path} launchpath LAUNCHPATH
+		importas -uD "s6-svscanboot" launchcommand SVSCANBOOT
+	}
+	export SERVICEDIR $superdir
+	export SUPERVISE_TAG $tag
+
+#more debug
+	foreground { /bin/echo ==envdir ENV== }
+	foreground { /usr/bin/printenv }
+	foreground { /bin/echo **PATH will be ${launchpath}** }
+
+#tidy up
+	background {
+		fdclose $stdin
+		backtick -E LogWait { /bin/date }
+		getpid logpid importas -Su logpid
+		#give svscanboot time to build the logger
+		foreground { /bin/sleep 10 }
+		backtick -E LogSleep { /bin/date }
+		define logger ${superdir}/s6-svscan-log/
+		multidefine "${logger}/fifo" { fifo }
+		foreground { s6-svwait -U $logger }
+		redirfd -wn $stdout $fifo
+		fdmove -c $stderr $stdout
+
+		backtick -E LogDump { /bin/date }
+		foreground { /bin/echo $0 stdout $StartTime - $LogWait - $LogSleep - $LogDump }
+		fdmove $stdin $r_out
+		foreground { /bin/cat }
+		foreground { /bin/rm $altout }
+		backtick -E LogErrDump { /bin/date }
+		foreground { /bin/echo $0 stderr $StartTime - $LogWait - $LogSleep - $LogErrDump }
+		fdmove $stdin $r_err
+		foreground { /bin/cat }
+		foreground { /bin/rm $alterr }
+		foreground { /bin/rmdir $tmpdir }
+	}
+
+	fdclose $null
+	fdclose $r_out
+	fdclose $r_err
+
+#restore the real stdout/stderr
+	fdmove $stdout $w_out
+	fdmove $stderr $w_err
+
+	export PATH ${launchpath}
+
+	$launchcommand -D ${logs}/s6-svscanboot -l ${reporter} ${superdir}
