@@ -1,0 +1,6 @@
+#!/command/execlineb
+s6-setuidgid _s6_log
+backtick -n where { pwd-to-subpath }
+	importas -iu there where
+s6-log t s99999 n10 /var/log/s6/${there}
+

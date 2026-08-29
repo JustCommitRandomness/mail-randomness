@@ -1,0 +1,43 @@
+#!/command/execlineb
+fdmove -c 2 1
+export PATH /command:/bin:/usr/bin
+
+ifelse -nX { [ -f /var/qmail/control/rcpthosts ] } {
+	foreground {
+		echo /var/qmail/control/rcpthosts must exist
+	}
+	exit 125
+}
+backtick -n where { pwd-to-subpath }
+	importas -iu there where
+export SPPCONFFILE /etc/${there}/plugins
+
+s6-envdir /etc/qmail/ENV
+s6-envdir /etc/${there}/ENV
+
+importas -D _qmaild UidGidUser UIDGIDUSER
+s6-envuidgid -i ${UidGidUser}
+
+foreground { service-start-email }
+
+multisubstitute {
+	importas -uD 10 MaxSmtpd	MAXSMTPD
+	importas -uD  3 MaxSameSmtpd	MAXSAMESMTPD
+	importas -ui    Address		IP
+	importas -uD 25 Port		PORT
+	importas -uD  2 TCPv		TCPVERBOSITY
+	importas -uD  1 TCPav		TCPACESSVERBOSITY
+	importas -uD /package/mail/qmail/bin
+			LaunchPath	LAUNCHPATH
+	importas -uD 5000 AccessTimout	ACCESSTIMEOUT
+}
+
+s6-tcpserver4-socketbinder ${Address} ${Port}
+#s6-applyuidgid -U -z
+su -m -s /command/exec ${UidGidUser}
+foreground { /usr/bin/id }
+foreground { /bin/sh -c "ulimit -a" }
+s6-tcpserver4d -v ${TCPv} -c ${MaxSmtpd} -C ${MaxSameSmtpd}
+s6-tcpserver-access  -W -r -t ${AccessTimout} -v 3
+export ${LaunchPath} PATH
+qmail-smtpd
