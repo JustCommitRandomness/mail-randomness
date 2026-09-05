@@ -1,0 +1,32 @@
+#!/command/execlineb
+/command/export PATH /command 
+/command/export FILES 250
+/command/export ALLMEM 10000000
+
+s6-envdir -i /etc/dnscache/ENV
+backtick -n there { pwd-to-subpath }
+importas -u here there
+s6-envdir -I /etc/${here}/ENV
+backtick -n IP { pwd-to-ip } 
+importas ip IP
+s6-envdir -I /etc/dnscache/ENV.${ip}
+
+foreground { service-start-email }
+
+fdmove -c 2 1
+redirfd -r 0 /dev/urandom
+multisubstitute {
+	importas -u allmem	ALLMEM
+	importas -u files	FILES
+	importas -u datalimit	DATALIMIT
+}
+s6-softlimit
+	-a ${allmem}
+	-o ${files}
+	-d ${datalimit}
+
+s6-envuidgid _dnscache
+
+dnscache
+
+

@@ -1,0 +1,25 @@
+#!/command/execlineb
+
+backtick ENV { /usr/bin/env }
+backtick -n DATE {
+	date "+Date: %a, %e %b %Y %H:%M:%S %z"
+} 
+getcwd PWD
+multisubstitute {
+	importas -u DATE DATE
+	importas -u ENV ENV
+	importas -u PWD PWD
+}
+heredoc 0 
+
+"From: (auto start)
+${DATE}
+Subject: auto started from ${PWD}
+
+${ENV}
+
+End of notification
+"
+
+qmail-inject justin@quick-hacks.co.uk
+
