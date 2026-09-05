@@ -1,0 +1,69 @@
+#!/command/execlineb -WS1
+/command/importas -D /command/ c SLASHPACKAGE_COMMAND
+${c}define svscanboot "svscanboot"
+#these need non-/command utils
+
+${c}s6-envdir -fI ${0}.ENV
+${c}backtick -E cmdname_def { ${c}pipeline { basename $0 } sed s:^\.:: }
+${c}backtick -E dirname_def { ${c}backtick -E d { dirname $0 } realpath $d }
+${c}backtick -E Tag_def { ${c}ifelse { ${c}eltest $1 } { echo $1 } echo s6 }
+${c}multisubstitute {
+	importas -SuD $Tag_def		Tag
+	importas -SuD $cmdname_def	cmdname
+	importas -uSsd "\n" 		extraenvdirs
+}
+${c}export SCANTAG $Tag
+${c}s6-envdir -I /etc/${cmdname}/ENV
+${c}s6-envdir -I /etc/${cmdname}/ENV.${Tag}
+${c}importas -SuD $dirname_def	SCANDIR
+${c}s6-envdir -I /etc/${cmdname}/${SCANDIR}/ENV
+${c}s6-envdir -I /etc/${cmdname}/${SCANDIR}/ENV.${Tag}
+
+${c}importas -uSD $dirname	SCANDIR
+${c}s6-envdir -I ${SCANDIR}/.ENV
+
+${c}export	SCANDIR	$SCANDIR
+
+###			default		key		EnvVar
+${c}importas -uD	s6_log		LogUser		LOGUSER
+${c}multisubstitute {
+	importas -uS					DEVCONSOLE
+	importas -uS					CATCHALLMODE
+	importas -uSD	$LogUser			CATCHALLUSER
+	importas -uS					CATCHALLOPTIONS
+	importas -uS					NOTIF
+	importas -uS					CONSOLEHOLDER
+	importas -uS					SERVICES_MAX
+	importas -uS					NAME_MAX
+	importas -uS					RESCAN
+	importas -uSD	"svscanboot"			LaunchCommand
+	importas -uSD	$Tag				SCANTAG
+}
+${c}importas -uSD	/var/log/${SCANTAG}${SCANDIR}	LOGDIR
+${c}importas -uSD	${LOGDIR}/s6-svscan		CATCHALLDIR
+
+${c}export	SCANTAG	$SCANTAG
+${c}export	LOGUSER	$LogUser
+${c}export	LOGDIR	$LOGDIR
+${c}export	SCANDIR	$SCANDIR
+
+${c}backtick bootcommand {
+	${c}forx -E arg {
+		${LaunchCommand}
+		"-c ${DEVCONSOLE}"
+		"-D ${CATCHALLDIR}"
+		"-m ${CATCHALLMODE}"
+		"-l ${CATCHALLUSER}"
+		"-o ${CATCHALLOPTIONS}"
+		"-d ${NOTIF}"
+		"-X ${CONSOLEHOLDER}"
+		"-C ${SERVICES_MAX}"
+		"-L ${NAME_MAX}"
+		"-t ${RESCAN}"
+		$SCANDIR
+	} echo $arg
+}
+${c}importas -sSCud "\n" bootcommand
+
+echo booting: $bootcommand
+$bootcommand
