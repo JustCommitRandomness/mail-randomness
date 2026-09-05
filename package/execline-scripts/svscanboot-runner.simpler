@@ -1,0 +1,91 @@
+#!/command/execlineb -WS1
+/command/importas -D /command/ c SLASHPACKAGE_COMMAND
+${c}define svscanboot "svscanboot"
+#these need non-/command utils
+
+${c}s6-envdir -fI ${0}.ENV
+${c}backtick -E cmdname_def { ${c}pipeline { basename $0 } sed s:^\.:: }
+${c}backtick -E dirname_def { dirname $0 }
+${c}backtick -E Tag_def { ${c}ifelse { ${c}eltest $1 } { echo $1 } echo s6 }
+${c}multisubstitute {
+	importas -SuD $Tag_def		Tag
+	importas -SuD $cmdname_def	cmdname  
+	importas -SuD $dirname_def	SCANDIR
+	importas -uSsd "\n" 		extraenvdirs
+}
+
+${c}foreground { echo 0= $svscanboot $cmdname "\n" }
+${c}backtick readenvdirs {
+	${c}backtick cmdnames {
+		${c}ifelse { ${c}eltest $svscanboot = $cmdname }
+		{ echo $svscanboot }
+		echo ${svscanboot}"\n"${cmdname}
+	}
+	${c}backtick dirnames {
+		${c}ifelse { ${c}eltest $dirname_def = $SCANDIR }
+		{ echo "\n"${SCANDIR}"/" }
+		echo "\n"${dirname_def}"/""\n"${SCANDIR}"/"
+	}
+	${c}multisubstitute {
+		importas -Ssd	"\n" cmdnames
+		importas -Ssd	"\n" dirnames
+		define   -sd	" "  Tags	" .${Tag}"
+	}
+	${c}backtick envdirs {
+		${c}pipeline {
+			echo "/etc/"${cmdnames}"/"${dirnames}"ENV"${Tags}"\n"
+			${extraenvdirs}"\n"
+		} sed 2,\$s:^\ ::
+	}
+	${c}importas -uSsd "\n" envdirs
+	${c}forx -E dir { $envdirs } 
+	echo ${c}"foreground\n echo\n" ${dir}"\n\n"${c}"s6-envdir\n-I\n"${dir}
+}
+${c}importas -Ssud "\n" readenvdirs
+$readenvdirs
+${c}importas -uSD $dirname	SCANDIR
+${c}s6-envdir -I ${SCANDIR}/.ENV
+
+${c}export	SCANDIR	$SCANDIR
+
+###			default		key		EnvVar
+${c}importas -uD	s6_log		LogUser		LOGUSER
+${c}multisubstitute {
+	importas -uS					DEVCONSOLE
+	importas -uS					CATCHALLMODE
+	importas -uSD	$LogUser			CATCHALLUSER
+	importas -uS					CATCHALLOPTIONS
+	importas -uS					NOTIF
+	importas -uS					CONSOLEHOLDER
+	importas -uS					SERVICES_MAX
+	importas -uS					NAME_MAX
+	importas -uS					RESCAN
+}
+${c}importas -uSD	/var/log/{$SCANTAG}/${SCANDIR}	LOGDIR
+${c}importas -uSD	${LOGDIR}/s6-svscan		CATCHALLDIR
+
+${c}export	SCANTAG	$SCANTAG
+${c}export	LOGUSER	$LogUser
+${c}export	LOGDIR	$LOGDIR
+${c}export	SCANDIR	$SCANDIR
+
+
+${c}backtick -iE bootcommand { /bin/echo
+	${launchCommand} 
+	"-c ${DEVCONSOLE}"
+	"-D ${CATCHALLDIR}"
+	"-m ${CATCHALLMODE}"
+	"-l ${CATCHALLUSER}"
+	"-o ${CATCHALLOPTIONS}"
+	"-d ${NOTIF}"
+	"-X ${CONSOLEHOLDER}"
+	"-C ${SERVICES_MAX}"
+	"-L ${NAME_MAX}"
+	"-t ${RESCAN}"
+	$SCANDIR
+}
+
+echo booting: $bootcommand
+# $bootcommand
+
+
