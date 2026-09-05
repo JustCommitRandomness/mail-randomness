@@ -10,39 +10,15 @@ ${c}backtick -E Tag_def { ${c}ifelse { ${c}eltest $1 } { echo $1 } echo s6 }
 ${c}multisubstitute {
 	importas -SuD $Tag_def		Tag
 	importas -SuD $cmdname_def	cmdname
-	importas -SuD $dirname_def	SCANDIR
 	importas -uSsd "\n" 		extraenvdirs
 }
+${c}export SCANTAG $Tag
+${c}s6-envdir -I /etc/${cmdname}/ENV
+${c}s6-envdir -I /etc/${cmdname}/ENV.${Tag}
+${c}importas -SuD $dirname_def	SCANDIR
+${c}s6-envdir -I /etc/${cmdname}/${SCANDIR}/ENV
+${c}s6-envdir -I /etc/${cmdname}/${SCANDIR}/ENV.${Tag}
 
-${c}foreground { echo 0= $svscanboot $cmdname "\n" }
-${c}backtick readenvdirs {
-	${c}backtick cmdnames {
-		${c}ifelse { ${c}eltest $svscanboot = $cmdname }
-		{ echo $svscanboot }
-		echo ${svscanboot}"\n"${cmdname}
-	}
-	${c}backtick dirnames {
-		${c}ifelse { ${c}eltest $dirname_def = $SCANDIR }
-		{ echo "\n"${SCANDIR}"/" }
-		echo "\n"${dirname_def}"/""\n"${SCANDIR}"/"
-	}
-	${c}multisubstitute {
-		importas -Ssd	"\n" cmdnames
-		importas -Ssd	"\n" dirnames
-		define   -sd	" "  Tags	" .${Tag}"
-	}
-	${c}backtick envdirs {
-		${c}pipeline {
-			echo "/etc/"${cmdnames}"/"${dirnames}"ENV"${Tags}"\n"
-			${extraenvdirs}"\n"
-		} sed 2,\$s:^\ ::
-	}
-	${c}importas -uSsd "\n" envdirs
-	${c}forx -E dir { $envdirs }
-	echo ${c}"foreground\n echo\n" ${dir}"\n\n"${c}"s6-envdir\n-I\n"${dir}
-}
-${c}importas -Ssud "\n" readenvdirs
-$readenvdirs
 ${c}importas -uSD $dirname	SCANDIR
 ${c}s6-envdir -I ${SCANDIR}/.ENV
 
@@ -62,8 +38,8 @@ ${c}multisubstitute {
 	importas -uS					RESCAN
 	importas -uSD	"svscanboot"			LaunchCommand
 	importas -uSD	$Tag				SCANTAG
-
-${c}importas -uSD	/var/log/${SCANTAG}/${SCANDIR}	LOGDIR
+}
+${c}importas -uSD	/var/log/${SCANTAG}${SCANDIR}	LOGDIR
 ${c}importas -uSD	${LOGDIR}/s6-svscan		CATCHALLDIR
 
 ${c}export	SCANTAG	$SCANTAG
