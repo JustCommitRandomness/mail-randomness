@@ -5,11 +5,11 @@ ${c}define svscanboot "svscanboot"
 
 ${c}s6-envdir -fI ${0}.ENV
 ${c}backtick -E cmdname_def { ${c}pipeline { basename $0 } sed s:^\.:: }
-${c}backtick -E dirname_def { dirname $0 }
+${c}backtick -E dirname_def { ${c}backtick -E d { dirname $0 } realpath $d }
 ${c}backtick -E Tag_def { ${c}ifelse { ${c}eltest $1 } { echo $1 } echo s6 }
 ${c}multisubstitute {
 	importas -SuD $Tag_def		Tag
-	importas -SuD $cmdname_def	cmdname  
+	importas -SuD $cmdname_def	cmdname
 	importas -SuD $dirname_def	SCANDIR
 	importas -uSsd "\n" 		extraenvdirs
 }
@@ -38,7 +38,7 @@ ${c}backtick readenvdirs {
 		} sed 2,\$s:^\ ::
 	}
 	${c}importas -uSsd "\n" envdirs
-	${c}forx -E dir { $envdirs } 
+	${c}forx -E dir { $envdirs }
 	echo ${c}"foreground\n echo\n" ${dir}"\n\n"${c}"s6-envdir\n-I\n"${dir}
 }
 ${c}importas -Ssud "\n" readenvdirs
@@ -60,8 +60,10 @@ ${c}multisubstitute {
 	importas -uS					SERVICES_MAX
 	importas -uS					NAME_MAX
 	importas -uS					RESCAN
-}
-${c}importas -uSD	/var/log/{$SCANTAG}/${SCANDIR}	LOGDIR
+	importas -uSD	"svscanboot"			LaunchCommand
+	importas -uSD	$Tag				SCANTAG
+
+${c}importas -uSD	/var/log/${SCANTAG}/${SCANDIR}	LOGDIR
 ${c}importas -uSD	${LOGDIR}/s6-svscan		CATCHALLDIR
 
 ${c}export	SCANTAG	$SCANTAG
@@ -69,23 +71,23 @@ ${c}export	LOGUSER	$LogUser
 ${c}export	LOGDIR	$LOGDIR
 ${c}export	SCANDIR	$SCANDIR
 
-
-${c}backtick -iE bootcommand { /bin/echo
-	${launchCommand} 
-	"-c ${DEVCONSOLE}"
-	"-D ${CATCHALLDIR}"
-	"-m ${CATCHALLMODE}"
-	"-l ${CATCHALLUSER}"
-	"-o ${CATCHALLOPTIONS}"
-	"-d ${NOTIF}"
-	"-X ${CONSOLEHOLDER}"
-	"-C ${SERVICES_MAX}"
-	"-L ${NAME_MAX}"
-	"-t ${RESCAN}"
-	$SCANDIR
+${c}backtick bootcommand {
+	${c}forx -E arg {
+		${LaunchCommand}
+		"-c ${DEVCONSOLE}"
+		"-D ${CATCHALLDIR}"
+		"-m ${CATCHALLMODE}"
+		"-l ${CATCHALLUSER}"
+		"-o ${CATCHALLOPTIONS}"
+		"-d ${NOTIF}"
+		"-X ${CONSOLEHOLDER}"
+		"-C ${SERVICES_MAX}"
+		"-L ${NAME_MAX}"
+		"-t ${RESCAN}"
+		$SCANDIR
+	} echo $arg
 }
+${c}importas -sSCud "\n" bootcommand
 
 echo booting: $bootcommand
 # $bootcommand
-
-
