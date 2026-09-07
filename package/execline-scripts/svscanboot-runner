@@ -50,16 +50,16 @@ ${c}export	SCANDIR	$SCANDIR
 ${c}backtick bootcommand {
 	${c}forx -E arg {
 		${LaunchCommand}
-		"-c ${DEVCONSOLE}"
-		"-D ${CATCHALLDIR}"
-		"-m ${CATCHALLMODE}"
-		"-l ${CATCHALLUSER}"
-		"-o ${CATCHALLOPTIONS}"
-		"-d ${NOTIF}"
-		"-X ${CONSOLEHOLDER}"
-		"-C ${SERVICES_MAX}"
-		"-L ${NAME_MAX}"
-		"-t ${RESCAN}"
+		"-c\n${DEVCONSOLE}"
+		"-D\n${CATCHALLDIR}"
+		"-m\n${CATCHALLMODE}"
+		"-l\n${CATCHALLUSER}"
+		"-o\n${CATCHALLOPTIONS}"
+		"-d\n${NOTIF}"
+		"-X\n${CONSOLEHOLDER}"
+		"-C\n${SERVICES_MAX}"
+		"-L\n${NAME_MAX}"
+		"-t\n${RESCAN}"
 		$SCANDIR
 	} echo $arg
 }
