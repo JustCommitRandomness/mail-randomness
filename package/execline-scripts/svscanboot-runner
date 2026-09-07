@@ -1,6 +1,6 @@
 #!/command/execlineb -WS1
 /command/importas -D /command/ c SLASHPACKAGE_COMMAND
-${c}define svscanboot "svscanboot"
+${c}define svscanboot "/command/s6-svscanboot"
 #these need non-/command utils
 
 ${c}s6-envdir -fI ${0}.ENV
@@ -25,7 +25,7 @@ ${c}s6-envdir -I ${SCANDIR}/.ENV
 ${c}export	SCANDIR	$SCANDIR
 
 ###			default		key		EnvVar
-${c}importas -uD	s6_log		LogUser		LOGUSER
+${c}importas -uD	_${Tag}_log	LogUser		LOGUSER
 ${c}multisubstitute {
 	importas -uS					DEVCONSOLE
 	importas -uS					CATCHALLMODE
@@ -36,7 +36,7 @@ ${c}multisubstitute {
 	importas -uS					SERVICES_MAX
 	importas -uS					NAME_MAX
 	importas -uS					RESCAN
-	importas -uSD	"svscanboot"			LaunchCommand
+	importas -uSD	${svscanboot}			LaunchCommand
 	importas -uSD	$Tag				SCANTAG
 }
 ${c}importas -uSD	/var/log/${SCANTAG}${SCANDIR}	LOGDIR
@@ -65,5 +65,5 @@ ${c}backtick bootcommand {
 }
 ${c}importas -sSCud "\n" bootcommand
 
-echo booting: $bootcommand
+${c}foreground { echo booting: \"${bootcommand}\" }
 $bootcommand

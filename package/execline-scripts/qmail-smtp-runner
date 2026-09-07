@@ -32,7 +32,7 @@ multisubstitute {
 	importas -uD 5000 AccessTimout	ACCESSTIMEOUT
 }
 
-s6-tcpserver4-socketbinder ${Address} ${Port}
+s6-tcpserver-socketbinder ${Address} ${Port}
 #s6-applyuidgid -U -z 
 # dirty hack to apply login.class. 
 su -m -s /command/exec ${UidGidUser}
