@@ -18,7 +18,7 @@ COWARDICE
   exit 1
 fi
 echo installing in $PACKAGEDIR and linking to $COMMANDDIR
-for dir in execline-scripts awk sed
+for dir in execline-scripts awk sed perl
 do
   if [ -d package/"${dir}" ]
   then
