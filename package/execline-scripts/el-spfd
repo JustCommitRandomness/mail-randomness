@@ -1,0 +1,32 @@
+#!/command/execlineb
+/command/importas -D /command/ c COMMANDPATH
+${c}export PATH $c
+${c}multisubstitute {
+	importas -D clarion.quick-hacks.co.uk	Helo	SMTPHELOHOST
+	importas -D 185.52.176.160		ip	REMOTEIP
+	importas -D test@godaddy.com	from	SMTPMAILFROM
+	importas -D "" pass PASS
+}
+pipeline {
+	getpid -E pid
+	s6-ipcclient /tmp/spfd
+	heredoc 0
+"ip_address=${ip}
+identity=${from}
+helo_identity=${Helo}
+	
+"
+	s6-ioconnect
+}
+
+/usr/bin/awk -F= "
+{ print $0;type = $1; $1=\"\" }
+\"result\"==type {result = $0; next}
+\"local_explanation\"==type {print $0 > \"/dev/stderr\"; next}
+\"received_spf_header\"==type {print \"H\" $0; next}
+\"smtp_comment\"==type {comment = $0; next}
+\"header_comment\"==type {next}
+{ print type, \"it is\",\$0 > \"/dev/stderr\"}
+END { } 
+"
+
