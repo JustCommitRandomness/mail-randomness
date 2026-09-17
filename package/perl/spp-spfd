@@ -51,8 +51,8 @@ I<option>B<=>I<value>, where the following options are supported:
 =item B<scope>
 
 The authorization scope of the identity that should be checked.  Defaults to
-B<'mfrom'>.  The following scope values are supported: B<'helo'>, B<'mfrom'>,
-B<'pra'>.  See L<Mail::SPF::Request/new> for more information.
+B<'mfrom'>.  The following scope values are supported: B<'helo'> and
+B<'mfrom'>.  See L<Mail::SPF::Request/new> for more information.
 
 =item B<MAILFROM>
 
@@ -73,61 +73,34 @@ The C<HELO> SMTP transaction parameter in the case that the main identity is of
 a scope other than C<helo>.  This identity is then used merely for the
 expansion of C<%{h}> macros during the policy evaluation of the main identity.
 If unspecified with a scope other than C<helo>, defaults to B<"unknown">.
-If the main identity is of the C<helo> scope, this option is unused.
 
 =back
 
 =head1 RESPONSE
 
-spfd responds to SPF requests with similar series of lines of the form
-I<key>B<=>I<value>.  The most important response keys are:
+spp-spfd responds to SPF requests with qmail-spp directives as directed by
+the handle_* bitmasks
 
-=over
+=item B<ADD_ENV>
 
-=item B<result>
+adds the spf result name to the environment variable SPF_RESULT
 
-The result code of the SPF check:
+=item B<ADD_HEADER>
 
-=over 12
+adds a 'HC<received_spf_header>' line, directing the caller to add the 
+expanded received_spf_header macro to the message
 
-=item B<pass>
+=
 
-The specified IP address is an authorized SMTP sender for the identity.
+=item B<H>received_spf_header
 
-=item B<fail>
+Triggered by ADD_HEADER, directs the caller to add the expanded
+received_spf_header macro to the email headers
 
-The specified IP address is not an authorized SMTP sender for the identity.
+=item B<E550-Message rejected by server>
+=item B<E550 SPF:>[authority_explanation|rejected (result_code)]
 
-=item B<softfail>
-
-The specified IP address is not an authorized SMTP sender for the identity,
-however the authority domain is still testing out its SPF policy.
-
-=item B<neutral>
-
-The identity's authority domain makes no assertion about the status of the IP
-address.
-
-=item B<permerror>
-
-A permanent error occurred while evaluating the authority domain's policy
-(e.g., a syntax error in the SPF record).  Manual intervention is required
-from the authority domain.
-
-=item B<temperror>
-
-A temporary error occurred while evaluating the authority domain's policy
-(e.g., a DNS error).  Try again later.
-
-=item B<none>
-
-There is no applicable SPF policy for the identity domain.
-
-=back
-
-=item B<local_explanation>
-
-A locally generated explanation of the SPF result.
+Triggered by PERMFAIL  locally generated explanation of the SPF result.
 
 =item B<authority_explanation>
 
@@ -152,7 +125,7 @@ A running spfd could be tested using the C<netcat> utility like this (line
 breaks added for clarity):
 
     $ echo -e "MAILFROM=user@example.com\nTCPREMOTEIP=1.2.3.4\n" \
-        | nc localhost 5970
+        | nc -U /tmp/spp-spfd
     result=fail
     local_explanation=example.com: Sender is not authorized by default to use
         'user@example.com' in 'mfrom' identity (mechanism '-all' matched)
@@ -183,37 +156,6 @@ option may be given to specify the identity's scope, otherwise a scope of
 C<mfrom> is assumed.  The old C<ip> and C<helo> options have been replaced by
 the C<TCPREMOTEIP> and C<HELOHOST> options, respectively.
 
-This is how legacy requests with the C<mfrom> scope would translate to the new
-preferred request style:
-
-  Legacy request style       | New request style
- ----------------------------+---------------------------------------
-                             | scope=mfrom
-  sender=<mfrom-identity>    | identity=<mfrom-identity>
-  ip=<ip-address>            | TCPREMOTEIP=<ip-address>
-  helo=<helo-identity>       | HELOHOST=<helo-identity>
-
-A new I<response> style featuring new response values has also been introduced:
-
-  Legacy response style      | New response style
- ----------------------------+---------------------------------------
-  result=<result-code>       | result=<result-code>
-  header_comment=<local-exp> | local_explanation=<local-exp>
-  smtp_comment=<local-exp    | authority_explanation=<authority-exp>
-    or authority-exp>        | 
-  spf_record=<spf-record>    | spf_record=<spf-record>
-                             | received_spf_header=<header>
-
-The legacy request style is deprecated but still supported for backwards
-compatibility.  The legacy response values are still returned for backwards
-compatibility in addition to the new response values, but may be removed in the
-future.  Adjust your code to use the new request and response styles.
-
-=item *
-
-The former C<unknown> and C<error> result codes have been renamed to C<permerror>
-and C<temperror>, respectively, in order to comply with RFC 4408 terminology.
-
 =item *
 
 In the case of an empty C<MAIL FROM> SMTP transaction parameter (C<<
@@ -226,13 +168,14 @@ in RFC 7208.
 
 =head1 SEE ALSO
 
-L<Mail::SPF>, L<spfquery(1)>
+L<Mail::SPF>, L<spfquery(1)>, L<spfd(1) 
 
 L<http://tools.ietf.org/html/rfc4408>
 
 =head1 AUTHORS
 
-This version of B<spfd> is a complete rewrite by Julian Mehnle <julian@mehnle.net>,
+This version of B<spp-spfd> is a radical modification of  B<spfd> itself
+a complete rewrite by Julian Mehnle <julian@mehnle.net>,
 based on an earlier version written by Meng Weng Wong <mengwong+spf@pobox.com>.
 
 =cut
@@ -250,6 +193,7 @@ use Mail::SPF;
 use Errno qw(EAGAIN);
 use Time::HiRes qw(sleep);
 use FindBin qw($Script);
+use charnames();
 use constant TRUE   => (0 == 0);
 use constant FALSE  => not TRUE;
 use constant ENV_OPTS => 1<<0;
@@ -266,9 +210,14 @@ $SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = sub {
     warn "$$: received $sig ($!)";
     exit 0;
 };
-my $stage = 0;    
+my @bouncelevel = qw(fail softfail neutral none error unknown);
+my %levelbounce = ('always' => -1);
+$levelbounce{$bouncelevel[$_]} = $_ for (0..$#bouncelevel);
+my @possible_all = qw(pass softfail neutral neutral-by-default fail);
+my @possible_results = (keys %{Mail::SPF::Result->result_classes}, 'Policy');
+
 my %opts = (
-    "listeners" => {
+    'listeners' => {
 	value => 5,
 	stage => ENV_OPTS|ARG_OPTS,
 	type => 'i',
@@ -279,12 +228,12 @@ my %opts = (
 	notate => '<n>',
 	desc => sub {
 	    my $self = shift;
-	    'Attempt to keep' 
-		. ' ' . ($self->{notate}) 
+	    'Attempt to keep'
+		. ' ' . ($self->{notate})
 		. ' Child processes ready'
 	}
     }
-    , "forkretries" => {
+    , 'forkretries' => {
 	value => 1,
 	stage => ENV_OPTS|ARG_OPTS,
 	type => 'i',
@@ -296,13 +245,13 @@ my %opts = (
 	desc => sub {
 	    my $self = shift;
 	    'If a fork fails due to EAGAIN, retry up to'
-		. ' ' . ($self->{notate}) 
+		. ' ' . ($self->{notate})
 		. ' times. EAGAIN is most likely to be caused by a'
 		. ' conservative NPROC limiting the number of processes'
  		. ' under the user.'
 	}
     }
-    , "forkretrydelay" => {
+    , 'forkretrydelay' => {
 	value => 200,
 	stage => ENV_OPTS|ARG_OPTS,
 	type => 'i',
@@ -321,14 +270,14 @@ my %opts = (
 		. ' A minimum delay is imposed to alleviate a tight loop'
 	}
     }
-    , "help" => {
+    , 'help' => {
 	value => FALSE,
 	stage => ARG_OPTS,
 	type => '!',
 	test => sub { TRUE },
 	desc => sub { 'print help usage and exit' },
     }
-    , "scope" => {
+    , 'scope' => {
 	value => 'mfrom',
 	stage => ENV_OPTS | ARG_OPTS | REQ_OPTS,
 	type => 's',
@@ -339,7 +288,7 @@ my %opts = (
 	notate => '<type>',
 	desc => sub { 'Which statement to check, MAIL FROM OR EHLO/HELO' },
     }
-    , "TCPREMOTEIP" => {
+    , 'TCPREMOTEIP' => {
 	value => undef,
 	stage => REQ_OPTS,
 	type => 's',
@@ -351,7 +300,7 @@ my %opts = (
 	     . ' An IPv4-mapped IPv6 address (e.g."::ffff:192.168.0.1") is'
 	     . ' treated as an IPv4 address.') },
     }
-    , "HELOHOST" => {
+    , 'HELOHOST' => {
 	value => undef,
 	stage => REQ_OPTS,
 	type => 's',
@@ -362,7 +311,7 @@ my %opts = (
 	     . ' expansion of %{h} macros and during the policy evaluation of'
 	     . ' the helo scope.') }
     }
-    , "MAILFROM" => {
+    , 'MAILFROM' => {
 	value => undef,
 	stage => REQ_OPTS,
 	type => 's',
@@ -373,13 +322,13 @@ my %opts = (
 	     . ' expansion of %{s} and ${o} macros and during the policy'
 	     . ' evaluation of the mfrom scope.') }
     }
-    , "debug" => {
+    , 'debug' => {
 	value => 1,
 	stage => ANY_OPTS,
 	type => 'i',
 	desc => sub { 'set debug level' }
     }
-    , "hostname" => {
+    , 'hostname' => {
 	value => undef,
 	stage => ANY_OPTS,
 	type => 's',
@@ -396,11 +345,70 @@ my %opts = (
 	},
 	desc => sub { 'the hostname to use for the reporting server' }
     }
-);
+    , 'SPF_ALL' => {
+	VALUE => undef,
+	stage => ANY_OPTS,
+	type => 's',
+	test => sub { my $v = shift; grep { $v eq $_ } @possible_all; },
+	notate => '<override>',
+	desc => sub {
+	    my $self = shift;
+	    'treat a matching "all" as'
+		. $self->{notate};
+	}
+    }
+    , 'BOUNCELEVEL' => {
+	VALUE => undef,
+	stage => ANY_OPTS,
+	type => 'i',
+	test => sub { my $v = shift; -1 <= $v <= 5 },
+	notate => '<level>',
+	desc => sub {
+	    my $self = shift;
+	    my $str =  'compatability shim for ra-plugins spfchecks.'
+		. ' If the result scores'
+		. ' ' . $self->{notate}
+		. ' or higher, the message will be rejected.'
+		. "\n"
+		. '-1 means never reject a messge.';
+	    $str .= "\n$_ means reject on $bouncelevel[$_]"
+		for (0..$#bouncelevel);
+	    return $str;
+	}
+    });
 
+my %actions=('ALL'=>0);
+my $actre;
+{
+    my $all=0;
+    my @acts = qw(LOG_SPF ADD_HEADER ADD_ENV PASS TEMPFAIL PERMFAIL ABORT);
+    $actions{ALL}|=$actions{$acts[$_]}=1<<$_ for (0 .. $#acts);
+    $actre = qr/^(?:~ALL|${\join('|[+~ ]?', @acts)})$/;
+}
+
+for my $spfres (@possible_results) {
+    $opts{"handle_${spfres}"} = {
+	value => $actions{LOG_SPF}|$actions{TEMPFAIL},
+	stage => ANY_OPTS,
+	type => 'bitmask',
+	test => sub { my $v = shift; return m/$actre/; },
+	expl => 'must be a actions bitmask. see --help',
+	notate => '<bitmask>',
+	desc => sub {
+	    my $self = shift;
+	    'modify the current actions for this result according to'
+		. ' ' . ($self->{notate})
+	}
+    };
+}
 
 # Helper Functions
 ##############################################################################
+sub safestring {
+    my $str = shift;
+    return $str =~ s/([\\\"\'^])/\\$1/gr
+	=~ s/([\p{Cc}])/ lc charnames::unctrl($1) /gre;
+}
 sub opt {my $i = shift; $opts{$i}->{value}}
 my $gettype='';
 sub validate_opts {
@@ -490,6 +498,7 @@ warn "building args" if opt('debug');
 foreach (keys %opts) {
     my $t = $opts{$_}->{type};
     warn "$_ doesn't have a type defined" && next unless defined $t;
+    $t = 's' if 'bitmask' eq $t;
     $t = "=$t" unless '!' eq $t;
     $options->{$_ . $t} = \&validate_opts if ($opts{$_}->{stage} & ARG_OPTS);
 }
@@ -514,8 +523,6 @@ if (opt('version')) {
 my $default_explanation = $options->{'default-explanation'};
 my $hostname            = opt('hostname');
 
-
-
 # Main Program
 ##############################################################################
 
@@ -526,12 +533,15 @@ my $spf_server = Mail::SPF::Server->new(
     hostname        => opt('hostname'),
     );
 
-# Handle Client Connections
-##############################################################################
 my $listen_socket = IO::Socket->new_from_fd(0,'r+');
-print("spfd (PID $$): Listening on socket '",
+warn ("spfd (PID $$): Listening on socket '",
       Socket::sockaddr_un( $listen_socket->sockname),
       "'\n") if (opt('debug'));
+unless ($listen_socket) {
+    die
+}
+# Prefork
+##############################################################################
 
 my $procs = opt('listeners');
 while (1) {
@@ -549,41 +559,38 @@ while (1) {
     }
     warn "print fork = $pid" if opt('debug');
     last if (0 == $pid);
-    
+
     $procs++ if wait > 0;
 }
 # Child process.
+$SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
+
+# Handle Client Connections
+##############################################################################
 my $socket;
 $socket =  $listen_socket->accept();
 die "Child $$ got an empty socket $!" unless $socket;
+
+$SIG{'TERM'} = 'IGNORE';
 close($listen_socket);
 
-my $time = gmtime;
-if (opt('debug')) {
-    my $peerinfo =
-	$listen_socket->isa('IO::Socket::INET') ?
-	sprintf(" from %s [%s]", scalar(gethostbyaddr($socket->peeraddr, AF_INET)), $socket->peerhost)
-	:   '';
-    print("\n");
-    print("[$time] Incoming connection" . $peerinfo . "\n");
+# read request
+##############################################################################
+my $request_values = {};
+while (<$socket>) {
+    s/\s+$//;
+    last if /^$/;
+    my ($key, $value) = split(/=/, $_, 2);
+    warn "request option $key not recognised" && next
+	unless ($opts{$key}->{stage} // 0 ) & REQ_OPTS;
+    $opts{$key}->{value} = $value;
+
+    warn "R: $key=$value\n" if 2 < opt('debug');
 }
 
 try {
     $socket->autoflush(TRUE);
-    
-    my $request_values = {};
-    while (<$socket>) {
-	s/\s+$//;
-	last if /^$/;
-	my ($key, $value) = split(/=/, $_, 2);
-	warn "request option $key not recognised" && next
-	    unless ($opts{$key}->{stage} // 0 ) & REQ_OPTS;
-	$opts{$key}->{value} = $value;
-	
-	print("[$time] R: $key=$value\n")
-	    if opt('debug');
-    }
-    
+
     my $request = Mail::SPF::Request->new(
 	versions        => [1],
 	scope           => opt('scope'),
@@ -593,19 +600,63 @@ try {
 	ip_address      => opt('TCPREMOTEIP'),
 	helo_identity   => opt('HELOHOST')
         );
-    
+
     my $result = $spf_server->process($request);
-    
-    
-    print($result->local_explanation);
-    $socket->print('H', $result->received_spf_header, "\n");
-    $socket->print('Sspp-spf-result=', $result->code, "\n");
 
+# Communicate results to caller
+##############################################################################
+    # ra-plugins spfchecks style
+    if (my $bl = opt('BOUNCELEVEL')) {	#ra-plugins style
+	my $res = $result->code;
+	print "$res accepted: accepting all messages\n", exit if $bl < 0;
+	my $level = $levelbounce{$res};
+	if (defined $level) {
+	    if ($level >= $bl) {
+		warn "accepting on $level:$res (BOUNCELEVEL=$bl)\n"
+		    if 2 < opt('debug');
+		exit 0
+	    }
+	    $socket->print("E550 Message rejected by server (SPF)\n");
+	    warn "rejecting on $level:$res (BOUNCELEVEL=$bl)\n"
+		if 1 < opt('debug');
+	    exit 0;
+	}
+	warn "unhandled $res in BOUNCLEVEL shim";
+	exit 1;
+    }
+    # flexible style
+    my $retbits = opt("handle_$result->name");
+    warn "${result}:$retbits $result->local_explanation: $retbits\n"
+	if opt('debug');
+    if ($retbits & $actions{LOG_SPF}) {
+	defined opt($_) && print "$_:" . opt($_) . ' '
+	    for (qw(scope MAILFROM HELOHOST TCPREMOTEIP));
+    }
+    $socket->print('H', safestring($result->received_spf_header), "\n")
+	if $retbits & $actions{ADD_HEADER};
+    $socket->print('SSPF_RESULT=', safestring($result->code), "\n")
+	if $retbits & $actions{ADD_ENV};
+    exit 0 if $retbits & $actions{PASS}; # if it passes, it passes.
+    my $rej = 'E451' if $retbits & $actions{TEMPFAIL};
+    $rej    = 'E550' if $retbits & $actions{PERMFAIL};
+    $rej    = 'D'    if $retbits & $actions{ABORT};
+    unless (defined $rej) { # it hasn't passed, aborted or temp/perm-failed??
+	warn "$Script misconfigured: no final disposition for $result->name";
+	$rej = 'E451';
+    }
+    $socket->print("$rej-Message rejected by " . safestring(opt('HOSTNAME'))
+		   ."\n$rej SPF: "
+		   . safestring(
+		       $result->can('authority_explanation')
+		       ? "$result->authority_explanation"
+		       : "rejected ($rej)")
+		   ."\n");
 
-catch Mail::SPF::Exception with {
-    my ($e) = @_;
-    printf("[$time] An error occurred: %s\n", $e->text);
-};
+    catch Mail::SPF::Exception with {
+	my ($e) = @_;
+	warn ("An error occurred: %s\n", $e->text);
+    };
+}
 
 $socket->close();
 
