@@ -1,0 +1,10 @@
+#!/command/execline -S 2
+/command/importas -D /command/	c  SLASHPACKAGE_COMMAND
+multisubstitute {
+	importas -D $c		el	EXECLINE_COMMAND
+	importas -D ${c}/s6- 	s6	S6_COMMAND
+	importas -D $c 		mr	MAILRANDOMNESS_COMMAND
+}
+${s6}ipcclient $1
+pipeline { pipeline { /usr/bin/printenv -0 } /usr/bin/tr \\n\\0 " "\\n }
+${s6}ioconnect

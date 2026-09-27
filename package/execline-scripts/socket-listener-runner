@@ -1,0 +1,71 @@
+#!/command/execlineb
+# socket-listener-runner
+/command/stderr-to-stdout-with-tag # a much more expensive fdmove -c 1 2
+importas -D /command/		tmpc	SLASHPACKAGE_COMMAND
+/command/multisubstitute {
+	importas -D /command/		tmpel	EXECLINE_COMMAND
+	importas -ui			service	SCANDIR
+	importas -ui			Tag	SCANTAG
+}
+importas -D /etc/${Tag}/${service}	confdir	ETC
+export ETC $confdir
+${tmpc}importas -D $tmpc		tmpmr	MAILRANDOMNESS_COMMAND
+##########################################################################
+${tmpmr}explode-servicedir	# grok the directory name to load config #
+##########################################################################
+foreground { printenv }
+${tmpel}importas -D	$tmpc		c	SLASHPACKAGE_COMMAND
+${tmpel}importas -D	$tmpel		el	EXECLINE_COMMAND
+${el}multisubstitute {
+	importas -D	${c}		mr	MAILRANDOMNESS_COMMAND
+	importas -iS				PATH
+	importas -D	${c}/s6- 	s6	S6_COMMAND
+	importas -D	/var/run/	rundir	SOCKETEERS_RUN
+	importas -uD	$PATH		expath	SOCKETEERS_PATH
+	importas -uD	$PATH		LP	LAUNCHPATH
+	importas -ui			here	where
+	importas -uSi				basename
+	importas -uSi				dirname
+	importas -uSi				base
+	importas -uSi				UID
+	importas -uSi				GID
+	importas -uSD	660			SOCKET_PERMS
+	importas -uS				LISTENER_ARGS
+}
+# requires definition od base as a default, so can't be in the multisub
+importas	-SD	$base			LISTENER
+
+${el}importas -uSD ${rundir}/${base}/${basename} SOCKET_PATH
+${el}backtick -Ei socketdir { dirname $SOCKET_PATH }
+foreground {
+	echo rundir: \"${rundir}\" base: \"${base}\" basename: \"${basename}\"
+	SOCKET_PATH: \"${SOCKET_PATH}\" socketdir: \"${socketdir}\"
+}
+${el}ifthenelse { ${el}eltest -d $socketdir }
+{ } {
+	${el}foreground {
+		${el}fdswap 1 2
+		echo I might get thiss wrong: Making socketdir $socketdir
+		from $dirname / $basename Please check path and permissions
+	}
+	mkdir -pm u=rwx,go=rx	$socketdir
+}
+
+${s6}ipcserver-socketbinder -a $SOCKET_PERMS -B $SOCKET_PATH
+foreground { 
+	${el}multisubstitute {
+		importas -uSD $UID	SOCKET_UID
+		importas -uSD $GID	SOCKET_GID
+	}
+	if -Xn { /usr/sbin/chown ${SOCKET_UID}:${SOCKET_GID} $SOCKET_PATH }
+	${el}fdwap 1 2
+	echo Problem calling /usr/sbin/chown \
+		${SOCKET_UID}:${SOCKET_GID} $SOCKET_PATH
+}
+${mr}envulimit
+foreground { echo ${s6}applyuidgid -u $UID -g $GID -G $GID }
+${s6}applyuidgid -u $UID -g $GID -G $GID
+${el}foreground { echo \"${LISTENER}\" \"${LISTENER_ARGS}\" }
+${el}export PATH $expath	# set the path export will to find the plugin
+${el}export PATH $LP		# set the path the plugin will use
+$LISTENER $LISTENER_ARGS
