@@ -1,0 +1,4 @@
+#!/command/execlineb -P
+
+/command/pipeline { /command/pwd-to-subpath }
+/usr/bin/awk -F/ "$NF ~ /^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$/ { print $NF; exit } { print \"buggered if I know\" ; exit 1 }"
