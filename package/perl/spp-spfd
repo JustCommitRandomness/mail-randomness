@@ -184,45 +184,65 @@ our $VERSION = '0.1';
 
 use warnings;
 use strict;
+use v5.40;
 
-use Error ':try';
 use IO::Handle;
 use Getopt::Long qw(:config gnu_compat);
 use Socket;
 use Mail::SPF;
-use Errno qw(EAGAIN);
-use Time::HiRes qw(sleep);
-use FindBin qw($Script);
-use charnames();
+use Errno 'EAGAIN';
+use Time::HiRes 'sleep';
+use Carp 'croak';
+use Hash::Util 'lock_keys';
+use Data::Dumper;
+use OpenBSD::Unveil;
+use lib '/home/justin.roberts/dev/package/mail-randomness/package/perllib';
+use qmailplugin;
+
 use constant TRUE   => (0 == 0);
 use constant FALSE  => not TRUE;
 use constant ENV_OPTS => 1<<0;
 use constant ARG_OPTS => 1<<1;
 use constant REQ_OPTS => 1<<2;
 use constant ANY_OPTS => ~0;
+use constant START_UP => ENV_OPTS | ARG_OPTS;
 
+#warm up NetAddr:IP for prefork and unveil
+{
+    use NetAddr::IP;
+    my $unused = NetAddr::IP->new('127.0.0.1', 8) . NetAddr::IP->new('::1', 8);
+}
+
+unveil('/', '');
+unveil('/etc/resolv.conf', 'r');
+unveil();
+
+STDOUT->autoflush(TRUE);
+STDERR->autoflush(TRUE);
+    
+$SIG{'USR1'} = $SIG{'USR2'} = 'IGNORE';
 $SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = sub {
     my $sig = shift;
     $sig = 'TERM' if ('HUP' eq $sig);
-    $SIG{$sig} = 'IGNORE';
-    kill('TERM', -$$);
+    kill('USR1', -$$);
     $SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
-    warn "$$: received $sig ($!)";
+    print("$$: received $sig ($!)\n");
     exit 0;
 };
-my @bouncelevel = qw(fail softfail neutral none error unknown);
+my @bouncelevel = qw(fail softfail neutral none error unknown pass);
 my %levelbounce = ('always' => -1);
 $levelbounce{$bouncelevel[$_]} = $_ for (0..$#bouncelevel);
 my @possible_all = qw(pass softfail neutral neutral-by-default fail);
 my @possible_results = (keys %{Mail::SPF::Result->result_classes}, 'Policy');
 
 my %opts = (
-    'listeners' => {
+#likely set by envdir
+    'LISTENERS' => {
 	value => 5,
-	stage => ENV_OPTS|ARG_OPTS,
+	stage => START_UP,
 	type => 'i',
 	test => sub { my $v = shift;
-		      return 1 <= $v
+		      return 0 <= $v
 			  && 10 >= $v; },
 	expl => 'must be between 1 and 10',
 	notate => '<n>',
@@ -230,47 +250,50 @@ my %opts = (
 	    my $self = shift;
 	    'Attempt to keep'
 		. ' ' . ($self->{notate})
-		. ' Child processes ready'
+		. ' Child processes ready.'
+		. '  A value of 0 skips preforking, turning into'
+		. ' a one shot '
 	}
     }
-    , 'forkretries' => {
-	value => 1,
-	stage => ENV_OPTS|ARG_OPTS,
+    , 'SOCKET_ON_FD' => {
+	value => 0,
+	stage => START_UP,
 	type => 'i',
 	test => sub { my $v = shift;
-		      return 0 <= $v
-			  && 100 >= $v; },
-	expl => 'must be between 0 and 100',
-	notate => '<n>',
-	desc => sub {
-	    my $self = shift;
-	    'If a fork fails due to EAGAIN, retry up to'
-		. ' ' . ($self->{notate})
-		. ' times. EAGAIN is most likely to be caused by a'
-		. ' conservative NPROC limiting the number of processes'
- 		. ' under the user.'
+		      return $v =~ m/\d+/ <= $v;
+	},
+	expl => 'Must be a file descriptor pointing to a socket'
+    }
+    , 'LOCALHOST' => {
+	value => undef,
+	stage => START_UP,
+	type => 'hostname',
+	notate => '<label>',
+	test => sub { TRUE },
+	desc => sub { 'the hostname to use for the reporting'
+			  . ' server, possibly overridden by TCPLOCALHOST '
 	}
     }
-    , 'forkretrydelay' => {
-	value => 200,
-	stage => ENV_OPTS|ARG_OPTS,
-	type => 'i',
-	test => sub { my $v = shift;
-		      return 50 <= $v
-			  && 10000 >= $v; },
-	expl => 'must be between 50 and 10000 msec'
-	    . ' (0.05 and 10 seconds)',
-	notate => '<msec>',
-	desc => sub {
-	    my $self = shift;
-	    'If a fork fails due to EAGAIN, wait'
-		. ' ' . ($self->{notate})
-		. ' milliseconds before continuing.'
-		. ' '
-		. ' A minimum delay is imposed to alleviate a tight loop'
+    , 'SPF_USETCPLOCALHOST' => {
+	value => undef,
+	stage => ANY_OPTS,
+	type => '!',
+	notate => '<label>',
+	test => sub { TRUE },
+	desc => sub { 'the default hostname to use for the reporting'
+			  . ' server, almost certain to be overwitten'
+			  . ' by the request'
 	}
     }
+#likely set by args
     , 'help' => {
+	value => FALSE,
+	stage => ARG_OPTS,
+	type => '!',
+	test => sub { TRUE },
+	desc => sub { 'print help usage and exit' },
+    }
+    , 'version' => {
 	value => FALSE,
 	stage => ARG_OPTS,
 	type => '!',
@@ -279,7 +302,7 @@ my %opts = (
     }
     , 'scope' => {
 	value => 'mfrom',
-	stage => ENV_OPTS | ARG_OPTS | REQ_OPTS,
+	stage => ANY_OPTS,
 	type => 's',
 	test => sub { my $v = shift;
 		      return $v =~ m/^(mfrom|helo)$/
@@ -288,76 +311,14 @@ my %opts = (
 	notate => '<type>',
 	desc => sub { 'Which statement to check, MAIL FROM OR EHLO/HELO' },
     }
-    , 'TCPREMOTEIP' => {
-	value => undef,
-	stage => REQ_OPTS,
-	type => 's',
-	test => sub { TRUE },
-	notate => '<ip address>',
-	desc => sub {
-	    ('The IP address of the host claiming the identity that is being'
-	     . ' checked.  Can be either an IPv4 or an IPv6 address. '
-	     . ' An IPv4-mapped IPv6 address (e.g."::ffff:192.168.0.1") is'
-	     . ' treated as an IPv4 address.') },
-    }
-    , 'HELOHOST' => {
-	value => undef,
-	stage => REQ_OPTS,
-	type => 's',
-	test => sub { TRUE },
-	notate => '<hostname>',
-	desc => sub {
-	    ('The EHLO/HELO SMTP transaction parameter. Used for the'
-	     . ' expansion of %{h} macros and during the policy evaluation of'
-	     . ' the helo scope.') }
-    }
-    , 'MAILFROM' => {
-	value => undef,
-	stage => REQ_OPTS,
-	type => 's',
-	test => sub { TRUE },
-	notate => '<hostname>',
-	desc => sub {
-	    ('The MAIL FROM SMTP transaction parameter. Used for the'
-	     . ' expansion of %{s} and ${o} macros and during the policy'
-	     . ' evaluation of the mfrom scope.') }
-    }
     , 'debug' => {
 	value => 1,
 	stage => ANY_OPTS,
 	type => 'i',
 	desc => sub { 'set debug level' }
     }
-    , 'hostname' => {
-	value => undef,
-	stage => ANY_OPTS,
-	type => 's',
-	notate => '<label>',
-	test => sub {
-	    my $v = shift;
-	    warn "hostname '$v' is too long (253)"
-		unless $v =~ /^.{0,253}\.?$/;
-	    warn "'$v' not a valid hostname"
-		unless "$v." =~ m/^(?:[0-9a-zA-Z_](?:[-0-9a-zA-Z_]{0,61}[0-9a-zA-Z_])?\.)+\.?$/;
-	    warn "hostname '$v' shouldn't contain _" if $v =~ m/_/;
-	    warn "recommend a trailing dot on hostname '$v'"
-		unless $v =~ m/\.$/;
-	},
-	desc => sub { 'the hostname to use for the reporting server' }
-    }
-    , 'SPF_ALL' => {
-	VALUE => undef,
-	stage => ANY_OPTS,
-	type => 's',
-	test => sub { my $v = shift; grep { $v eq $_ } @possible_all; },
-	notate => '<override>',
-	desc => sub {
-	    my $self = shift;
-	    'treat a matching "all" as'
-		. $self->{notate};
-	}
-    }
-    , 'BOUNCELEVEL' => {
+# likely set by request
+    , 'SPFBOUNCELEVEL' => {
 	VALUE => undef,
 	stage => ANY_OPTS,
 	type => 'i',
@@ -375,6 +336,59 @@ my %opts = (
 		for (0..$#bouncelevel);
 	    return $str;
 	}
+    }
+    , 'SMTPHELOHOST' => {
+	value => undef,
+	stage => REQ_OPTS,
+	type => 's',
+	test => sub { TRUE },
+	notate => '<hostname>',
+	desc => sub {
+	    ('The EHLO/HELO SMTP transaction parameter. Used for the'
+	     . ' expansion of %{h} macros and during the policy evaluation of'
+	     . ' the helo scope.') }
+    }
+    , 'SMTPMAILFROM' => {
+	value => undef,
+	stage => REQ_OPTS,
+	type => 's',
+	test => sub { TRUE },
+	notate => '<hostname>',
+	desc => sub {
+	    ('The MAIL FROM SMTP transaction parameter. Used for the'
+	     . ' expansion of %{s} and ${o} macros and during the policy'
+	     . ' evaluation of the mfrom scope.') }
+    }
+    , 'TCPLOCALHOST' => {
+	value => undef,
+	stage => REQ_OPTS,
+	type => 's',
+	test => sub { TRUE },
+	notate => '<ip address>',
+	desc => sub {
+	    ('The hostname to use for the reporting server in macro'
+	    . 'expansions, overwritting HOSTNAME') },
+    }
+    , 'TCPREMOTEHOST' => {
+	value => undef,
+	stage => REQ_OPTS,
+	type => 's',
+	test => sub { TRUE },
+	notate => '<ip address>',
+	desc => sub {
+	    ('The reverse lookup of the connecting IP address') },
+    }
+    , 'TCPREMOTEIP' => {
+	value => undef,
+	stage => REQ_OPTS,
+	type => 's',
+	test => sub { TRUE },
+	notate => '<ip address>',
+	desc => sub {
+	    ('The IP address of the host claiming the identity that is being'
+	     . ' checked.  Can be either an IPv4 or an IPv6 address. '
+	     . ' An IPv4-mapped IPv6 address (e.g."::ffff:192.168.0.1") is'
+	     . ' treated as an IPv4 address.') },
     });
 
 my %actions=('ALL'=>0);
@@ -401,29 +415,65 @@ for my $spfres (@possible_results) {
 	}
     };
 }
+$opts{'handle_pass'}->{value} =
+    $actions{LOG_SPF} | $actions{ADD_HEADER} | $actions{PASS};
+$opts{'handle_fail'}->{value} =
+    $actions{LOG_SPF} | $actions{ABORT};
+lock_keys(%opts);
 
 # Helper Functions
 ##############################################################################
+sub debug {
+    my (undef, $file, $line) = caller(0);
+    $file =~ s!.*/!!;
+    print "DBG: $file($$):$line\t", @_, "\n"
+}
 sub safestring {
     my $str = shift;
-    return $str =~ s/([\\\"\'^])/\\$1/gr
+    return $str =~ s/\n$//r
+	=~ s/([\\\"\'^])/\\$1/gr
 	=~ s/([\p{Cc}])/ lc charnames::unctrl($1) /gre;
 }
-sub opt {my $i = shift; $opts{$i}->{value}}
+sub opt {
+    my $option = shift;
+    croak "'$option' not an option" unless exists $opts{$option};
+    $opts{$option}->{value};
+}
+sub opt_or_die {
+    my $option = shift;
+    my $value;
+    defined($value = opt($option))
+	? $value : die "$option must be set";
+}
+sub or_undef {
+    shift // '<undef>'
+}
+sub stringify_request {
+    my $r = shift;
+    'request.' . or_undef($r->scope)
+	. '("' . or_undef($r->identity) . '", '
+	    . or_undef($r->ip_address)
+	    . ', "' . or_undef($r->helo_identity) . '")'
+}
 my $gettype='';
 sub validate_opts {
     my ($optname, $value) = @_;
-    warn "validating '$optname' '$value' (@_)" if opt('debug');
+    debug("validating '$optname' '$value' (@_)") if opt('debug');
     my $opt = $opts{$optname};
     my $reason;
     if (!defined $opt->{type}) {
 	warn "undefined option type for $optname";
     } elsif ('i' eq $opt->{type}) {
-	$reason = 'Expected an integer' unless ($value =~ m/^[-+]?[0-9]+$/) ;
+	$reason = 'Expected an integer' unless ($value =~ m/^[-+]?[0-9]+$/);
+	$value += 0;
     } elsif ('!' eq $opt->{type}) {
 	$value = $value // FALSE ? TRUE : FALSE;
     } elsif ('s' eq $opt->{type}) {
 	0;
+    } elsif ('hostname' eq $opt->{type}) {
+	my $newvalue = validate_hostname($value);
+	$reason = "poorly formed hostname $value (try $newvalue)";
+	$value = $newvalue;
     } else {
 	warn "unrecognised option type '$opt->{type}' for $optname";
     }
@@ -432,12 +482,30 @@ sub validate_opts {
     if ($reason) {
 	warn "${gettype}${optname} = '${value}' : ${reason}"
 	    . "\n( was '$opt->{value}')";
- 	$opt->{value} = undef;
-	return
+ 	$value = undef;
     }
     $opt->{value} = $value;
 }
+sub validate_hostnames {
+    my $copy = my $value = shift;
+    debug("validating hostname '$value'") if opt('debug');
+    my $reason;
+    my $trail = $value =~ s/\.+$// ? '.' : '';
+    if ($reason = $value =~ s/(\.($!\.)|[^.]*+)(\.\.++)/$1  >> $2 << /gr
+	&& $reason ne $value) {
+	warn "stripping empty subdomains: $reason";
+	$value =~ s/\.\.++//;
+    }
+    warn "stripped leading . from hostname '$copy'" if $value =~ s/^.//;
+    warn "truncating to $1";
+    if ($value =~ m/^(.{253})./) {
+    }
+    $value .= $trail;
+    warn "FQDN recommended (trailing dot)" unless $trail || $value ne $copy;
+    return $value;
+}
 sub usage {
+    my (undef, $Script) = caller(0);
     STDERR->print('Usage: ');
     my $string=undef;
     foreach (keys %opts) {
@@ -480,12 +548,12 @@ sub usage {
 # Env Var Handling
 ##############################################################################
 $gettype='$';
-warn "reading env" if opt('debug');
+debug("reading env") if opt('debug');
 foreach (keys %opts) {
     if ($opts{$_}->{stage} & ENV_OPTS) {
 	my $v = $ENV{$_};
-	warn "validate_opts($_, $v)" if defined $v && opt('debug');
-	validate_opts($_, $v) if defined $v;
+	debug("validate_opts($_, $v)") if defined $v && opt('debug');
+	validate_opts($_, $v, FALSE) if defined $v;
     };
 };
 
@@ -494,13 +562,18 @@ foreach (keys %opts) {
 
 $gettype='--';
 my $options = {};
-warn "building args" if opt('debug');
+debug("building args") if opt('debug');
 foreach (keys %opts) {
     my $t = $opts{$_}->{type};
-    warn "$_ doesn't have a type defined" && next unless defined $t;
-    $t = 's' if 'bitmask' eq $t;
-    $t = "=$t" unless '!' eq $t;
-    $options->{$_ . $t} = \&validate_opts if ($opts{$_}->{stage} & ARG_OPTS);
+    unless (defined $t) {
+	warn "$_ doesn't have a type defined";
+	next;
+    }
+    if ('bitmask' eq $t) { $t = '=s' }
+    elsif ('hostname' eq $t) { $t = '=s' }
+    elsif ('!' ne $t) { $t = "=$t" }
+    $options->{$_ . $t} = \&validate_opts
+	if ($opts{$_}->{stage} & ARG_OPTS);
 }
 warn "reading args" if opt('debug');
 my $getopt_result = GetOptions %$options;
@@ -521,7 +594,6 @@ if (opt('version')) {
 }
 
 my $default_explanation = $options->{'default-explanation'};
-my $hostname            = opt('hostname');
 
 # Main Program
 ##############################################################################
@@ -530,48 +602,57 @@ STDOUT->autoflush(TRUE);
 
 my $spf_server = Mail::SPF::Server->new(
     default_authority_explanation => $default_explanation,
-    hostname        => opt('hostname'),
+    hostname        => opt('LOCALHOST'),
     );
 
 my $listen_socket = IO::Socket->new_from_fd(0,'r+');
-warn ("spfd (PID $$): Listening on socket '",
+print(__FILE__ . "(PID $$): Listening on socket ",
       Socket::sockaddr_un( $listen_socket->sockname),
-      "'\n") if (opt('debug'));
+      "'\n");
 unless ($listen_socket) {
-    die
+    die $!;
 }
 # Prefork
 ##############################################################################
 
-my $procs = opt('listeners');
-while (1) {
-    my $pid;
-    my $attempts = opt('forkretry');
+my $procs = 0;
+if (my $forks = opt_or_die('LISTENERS')) {
+    while (1) {
+	my $pid;
 
-    warn "$$ = $procs";
-    while ($procs) {
-	warn "$$ : $procs";
-	$pid = fork();
-	warn "print fork ($!) =";# if opt('debug');
-	warn "failed to fork ($procs to go)" && sleep(1) unless defined $pid;
-	last unless $pid;
-	$procs--;
+	if ($procs) {
+	    debug("Launching children, currently $procs/$forks")
+		  if opt('debug');
+	} else {
+	    print "Launching $forks children\n";
+	}
+	while ($forks > $procs) {
+	    debug("$$ : $procs\n") if 3 < opt('debug');
+	    $pid = fork();
+	    unless (defined $pid) {
+		warn "$! -- failed to fork ($procs/$forks)";
+		sleep(1);
+	    }
+	    last unless $pid;	#no more forking, child or error
+	    $procs++;
+	}
+	last if (0 == $pid);	#not the parent, so exit the loop
+	$procs-- if $procs && 0 < wait;
     }
-    warn "print fork = $pid" if opt('debug');
-    last if (0 == $pid);
-
-    $procs++ if wait > 0;
+} else {
+    warn 'not forking, single shot:';
 }
 # Child process.
+##############################################################################
 $SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
 
 # Handle Client Connections
 ##############################################################################
 my $socket;
-$socket =  $listen_socket->accept();
+$socket = $listen_socket->accept();
+$SIG{'USR1'} = 'IGNORE';	# don't die 
 die "Child $$ got an empty socket $!" unless $socket;
 
-$SIG{'TERM'} = 'IGNORE';
 close($listen_socket);
 
 # read request
@@ -581,82 +662,104 @@ while (<$socket>) {
     s/\s+$//;
     last if /^$/;
     my ($key, $value) = split(/=/, $_, 2);
-    warn "request option $key not recognised" && next
-	unless ($opts{$key}->{stage} // 0 ) & REQ_OPTS;
+    debug("R: $key=$value\n") if 3 < opt('debug');
+    my $stage;
+    unless (exists($opts{$key})) {
+	debug("request option $key not recognised")
+	    if 4 < opt('debug');	# indisciminate info expected
+	next;
+    }
+    unless (REQ_OPTS & $opts{$key}->{stage}) {
+	print "option $key not valid in request\n"
+	    if opt('debug');
+	next;
+    }
     $opts{$key}->{value} = $value;
-
-    warn "R: $key=$value\n" if 2 < opt('debug');
 }
+    
+$spf_server->{hostname} = ($opts{TCPLOCALHOST}->{value})
+if $opts{SPF_USETCPLOCALHOST}->{value} && $opts{TCPLOCALHOST}->{value};
+    
+my $request = Mail::SPF::Request->new(
+    versions        => [1],
+    scope           => opt('scope'),
+    identity        => (opt('scope') eq 'helo'
+			? opt_or_die('SMTPHELOHOST')
+			: opt_or_die('SMTPMAILFROM')),
+    ip_address      => opt_or_die('TCPREMOTEIP'),
+    helo_identity   => opt('SMTPHELOHOST')
+    );
 
+my $result;
 try {
-    $socket->autoflush(TRUE);
+    $result = $spf_server->process($request);
+}
+catch ($e) {
+    warn "spf_server->process(\n" . Dumper($request)
+	. "\n) -> \n" . Dumper($e);
+    qp_temperror(451, '4.7.24',
+	       'SPF TempError at "' . $spf_server->hostname . '":'
+	       . "\n" . 'DNS timeout for "' . $request->domain . '"')
+	if $e isa Mail::SPF::EDNSTimeout;
+    croak ('Unhandled error: ' . stringify_request($request)
+	   . ' -> ' . $e->text);
+};
 
-    my $request = Mail::SPF::Request->new(
-	versions        => [1],
-	scope           => opt('scope'),
-	identity        => ((opt('scope') eq 'helo')
-			    ? opt('HELOHOST')
-			    : opt('MAILFROM')),
-	ip_address      => opt('TCPREMOTEIP'),
-	helo_identity   => opt('HELOHOST')
-        );
+#debug(Dumper $result);
 
-    my $result = $spf_server->process($request);
 
 # Communicate results to caller
 ##############################################################################
-    # ra-plugins spfchecks style
-    if (my $bl = opt('BOUNCELEVEL')) {	#ra-plugins style
-	my $res = $result->code;
-	print "$res accepted: accepting all messages\n", exit if $bl < 0;
-	my $level = $levelbounce{$res};
-	if (defined $level) {
-	    if ($level >= $bl) {
-		warn "accepting on $level:$res (BOUNCELEVEL=$bl)\n"
-		    if 2 < opt('debug');
-		exit 0
-	    }
-	    $socket->print("E550 Message rejected by server (SPF)\n");
-	    warn "rejecting on $level:$res (BOUNCELEVEL=$bl)\n"
-		if 1 < opt('debug');
-	    exit 0;
+my $bl = opt('SPFBOUNCELEVEL');
+if (defined $bl) {	#ra-plugins style
+    debug("ra-plugins style: $bl") if 3 < opt('debug');
+    my $res = $result->code;
+    print "$res accepted: accepting all messages\n", exit 0 if $bl < 0;
+    my $level = $levelbounce{$res};
+    if (defined $level) {
+	if ($level > $bl) {
+	    debug("accepting on $level:$res (SPFBOUNCELEVEL=$bl)")
+		if 2 < opt('debug');
+	    exit 0
 	}
-	warn "unhandled $res in BOUNCLEVEL shim";
-	exit 1;
+	$socket->print("E550 Message rejected by server (SPF)\n");
+	warn "rejecting on $level:$res (SPFBOUNCELEVEL=$bl)\n"
+	    if 1 < opt('debug');
+	exit 0;
     }
-    # flexible style
-    my $retbits = opt("handle_$result->name");
-    warn "${result}:$retbits $result->local_explanation: $retbits\n"
-	if opt('debug');
-    if ($retbits & $actions{LOG_SPF}) {
-	defined opt($_) && print "$_:" . opt($_) . ' '
-	    for (qw(scope MAILFROM HELOHOST TCPREMOTEIP));
-    }
-    $socket->print('H', safestring($result->received_spf_header), "\n")
-	if $retbits & $actions{ADD_HEADER};
-    $socket->print('SSPF_RESULT=', safestring($result->code), "\n")
-	if $retbits & $actions{ADD_ENV};
-    exit 0 if $retbits & $actions{PASS}; # if it passes, it passes.
-    my $rej = 'E451' if $retbits & $actions{TEMPFAIL};
-    $rej    = 'E550' if $retbits & $actions{PERMFAIL};
-    $rej    = 'D'    if $retbits & $actions{ABORT};
-    unless (defined $rej) { # it hasn't passed, aborted or temp/perm-failed??
-	warn "$Script misconfigured: no final disposition for $result->name";
-	$rej = 'E451';
-    }
-    $socket->print("$rej-Message rejected by " . safestring(opt('HOSTNAME'))
-		   ."\n$rej SPF: "
-		   . safestring(
-		       $result->can('authority_explanation')
-		       ? "$result->authority_explanation"
-		       : "rejected ($rej)")
-		   ."\n");
-
-    catch Mail::SPF::Exception with {
-	my ($e) = @_;
-	warn ("An error occurred: %s\n", $e->text);
-    };
+    warn "unhandled $res in SPFBOUNCELEVEL shim";
+    exit 1;
 }
+# flexible style
+debug("flexible style: ".opt('SPFBOUNCELEVEL')) if 3 < opt('debug');
+my $retbits = opt("handle_$result->name");
+warn "${result}:$retbits $result->local_explanation: $retbits\n"
+    if opt('debug');
+if ($retbits & $actions{LOG_SPF}) {
+    defined opt($_) && print "$_:" . opt($_) . ' '
+	for (qw(scope MAILFROM HELOHOST TCPREMOTEIP));
+}
+$socket->print('H', safestring($result->received_spf_header), "\n")
+    if $retbits & $actions{ADD_HEADER};
+$socket->print('SSPF_RESULT=', safestring($result->code), "\n")
+    if $retbits & $actions{ADD_ENV};
+exit 0 if $retbits & $actions{PASS}; # if it passes, it passes.
+my $rej = 'E451' if $retbits & $actions{TEMPFAIL};
+$rej    = 'E550' if $retbits & $actions{PERMFAIL};
+$rej    = 'D'    if $retbits & $actions{ABORT};
+unless (defined $rej) { # it hasn't passed, aborted or temp/perm-failed??
+    warn __FILE__ . " misconfigured: no final disposition for $result->name";
+    $rej = 'E451 Internal Error';
+}
+$socket->print("$rej-Message rejected by "
+	       . safestring(opt('TCPLOCALHOST') // 'Mail Server')
+	       ."\n$rej SPF: "
+	       . safestring(
+		   $result->can('authority_explanation')
+		   ? "$result->authority_explanation"
+		   : "rejected ($rej)")
+	       ."\n");
+
 
 $socket->close();
 
