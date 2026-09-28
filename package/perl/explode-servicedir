@@ -1,0 +1,51 @@
+#!/usr/bin/perl
+use strict; use warnings;
+use Cwd 'getcwd';
+my ($base, $where);
+{
+  my $cwd = getcwd();
+  $is_log = s~/log$// ? 'log.; : '';
+  my $M_octet	= qr/ (?: [0-1]?[0-9]{1,2} | 2[0-4][0-9] | 25[0-5] ) /x;
+  my $M_proto	= qr/(T(?:[Cc][Pp])?|U(?:[Dd][Pp])?)[_-]?/;
+  my $M_ip	= qr/($M_octet(?:\.$M_octet){3})/;
+  my $M_prefix	= qr/(?:\+([0-2]?[0-9]|3[0-2]))/;
+  my $M_pnum	= qr/( [0-5]?[0-9]{1,4} | 6[0-4][0-9]{3} 
+		     | 65[0-4][0-9]{2} | 655[0-2][0-9] | 6553[0-5] ) /x;
+  my $M_pword	= qr/(?:[[:alpha:]][[:alnum:]]*)/;
+  my $M_pname	= qr/($M_pword(?:[-_]$M_pword))*/;
+  my $M_port	= qr/(?:$M_pname|$M_pname)/;
+  my $M_prange	= qr/$M_port(?:\.\.$M_port)/;
+  my $M_netspec	= qr/(?: $M_proto $M_ip $M_prefix? $M_prange? )/x;
+
+  my @cwd;
+  my $all;
+  my ($tcp, $udp,  $pname, $topname, $long, $short);
+  my $proto = 'tcp';
+  ($cwd, $tcp, $udp,$ENV{'IP'},$ENV{'PREFIX'},
+  $ENV{'PORT'}, $pname,$ENV{'TOPORT'}, $topname)
+    = @cwd if @cwd = $cwd =~ m/.*(?:[-:_]$M_netspec)$/;
+ $ENV{'PROTO'} = 'UDP' if $udp;
+ $ENV{'PORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $pname;
+ $ENV{'TOPORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $topname;
+  
+  ($ENV{'dirname'},$ENV{'basename'}, $long, $short, $all, $cwd)
+    = $cwd =~ m!^(.*)/((?:([^_]+)_|([^-]+)-|([^_-]*))(.*))$!;
+  if ($all) {
+    $where = $base = $all;
+  } else {
+    $base = $long ? $long : $short;
+    @cwd = $cwd =~  m/([^-_]+)/g;
+    $where = join('/', $base, @cwd);
+  }
+  $ENV{'base'} = $base;
+  $ENV{'where'} = $where;
+}
+{
+  my $conf = $ENV{'ETC'} // join('/', '/etc', $ENV{SCANTAG}, $ENV{SCANDIR});
+  my @myargv = ('/command/s6-envdir', '-I', "$conf/$base/${is_log}ENV");
+  push @myargv, ('/command/s6-envdir', '-I', "$conf/$where.${is_log}ENV")
+      if $where ne $base;
+  print "$conf: ", join(' ', @myargv), "\n" ;
+  push @myargv, @ARGV;
+  exec @myargv;
+}

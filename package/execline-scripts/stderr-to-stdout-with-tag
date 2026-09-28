@@ -1,0 +1,21 @@
+#!/command/execlineb
+/command/importas -D /command/		c	SLASHPACKAGE_COMMAND
+${c}fdreserve 2
+${c}multisubstitute {
+	importas -iuD "STDERR:" prefix ERRTAG
+	importas -u read FD0
+	importas -u write FD1
+	multidefine "0 1 2" { stdin stdout stderr } 
+}
+${c}piperw $read $write
+${c}background {
+	${c}fdmove -c 2 1
+	${c}fdmove $stdin $read 
+	${c}fdclose $write
+	${c}s6-log p${prefix} 1
+}
+${c}fdclose $read
+${c}fdmove $stderr $write
+
+${c}runblock -r 0 ####### chainload
+

@@ -1,17 +1,18 @@
 #!/command/execlineb
-backtick -n where { pwd-to-subpath }
-	importas -iu there where
+explode-servicedir
 s6-envdir -I ENV
-s6-envdir -I /etc/${there}/log.ENV
-importas -SD _s6_log LOGUSER
 multisubstitute {
-	importas -SD $LOGUSER LOGGROUP
-	importas -SD _s6_log LOGDIR
-	importas -SsuD "t s99999 n10" LOGCONTROL
+	importas -SD	_s6_log			LOGUSER
+	importas -ui			there	where
 }
-importas -SD  ${LOGDIR}/${there} SERVICELOG
+multisubstitute {
+	importas -SD	$LOGUSER		LOGGROUP
+	importas -SsuD 	"t s99000 n10" 		LOGCONTROL
+	importas -SD  	${LOGDIR}/${there}	SERVICELOG
+	importas -Su				EXTRALOG
+}
 foreground { mkdir -p $SERVICELOG }
 foreground { /usr/sbin/chown ${LOGUSER}:${LOGGROUP} $SERVICELOG }
 s6-setuidgid $LOGUSER 
-s6-log $LOGCONTROL $SERVICELOG
+s6-log $LOGCONTROL $SERVICELOG $EXTRALOG
 

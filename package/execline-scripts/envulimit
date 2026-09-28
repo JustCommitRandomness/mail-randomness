@@ -1,0 +1,77 @@
+#!/command/execlineb
+/command/importas -D /command/ c SLASHPACKAGE_COMMAND
+
+${c}importas -uD	s6_log		LogUser		LOGUSER
+${c}multisubstitute {
+	importas -S	ALLMEM_hard
+	importas -S	CORE_hard
+	importas -S	DATA_hard
+	importas -S	FSIZE_hard
+	importas -S	LOCK_hard
+	importas -S	MEM_hard
+	importas -S	OFILES_hard
+	importas -S	PRIO_hard
+	importas -S	PROC_hard
+	importas -S	RES_hard
+	importas -S	STACK_hard
+	importas -S	CPUSECS_hard
+
+	importas -S	ALLMEM_soft
+	importas -S	CORE_soft
+	importas -S	DATA_soft
+	importas -S	FSIZE_soft
+	importas -S	LOCK_soft
+	importas -S	MEM_soft
+	importas -S	OFILES_soft
+	importas -S	PRIO_soft
+	importas -S	PROC_soft
+	importas -S	RES_soft
+	importas -S	STACK_soft
+	importas -S	CPUSECS_soft
+}
+${c}backtick hardcommand {
+	${c}forx -E arg {
+		"-a\n"${ALLMEM_hard}
+		"-c\n"${CORE_hard}
+		"-d\n"${DATA_hard}
+		"-f\n"${FSIZE_hard}
+		"-l\n"${LOCK_hard}
+		"-m\n"${MEM_hard}
+		"-o\n"${OFILES_hard}
+		"-P\n"${PRIO_hard}
+		"-p\n"${PROC_hard}
+		"-r\n"${RES_hard}
+		"-s\n"${STACK_hard}
+		"-t\n"${CPUSECS_hard}
+	} echo $arg 
+}
+${c}backtick softcommand {
+	${c}forx -E arg {
+		"-a\n"${ALLMEM_soft}
+		"-c\n"${CORE_soft}
+		"-d\n"${DATA_soft}
+		"-f\n"${FSIZE_soft}
+		"-l\n"${LOCK_soft}
+		"-m\n"${MEM_soft}
+		"-o\n"${OFILES_soft}
+		"-P\n"${PRIO_soft}
+		"-p\n"${PROC_soft}
+		"-r\n"${RES_soft}
+		"-s\n"${STACK_soft}
+		"-t\n"${CPUSECS_soft}
+	} echo $arg
+}
+${c}multisubstitute {
+	importas -sSCud "\n" hardcommand
+	importas -sSCud "\n" softcommand
+}
+${c}foreground {
+	${c}fdmove 1 2
+	echo "Setting hard limits:"
+	\"${hardcommand}\"
+	"\nSetting soft limits:"
+	\"${softcommand}\"
+}
+${c}s6-softlimit -h $hardcommand
+${c}s6-softlimit $softcommand
+${c}runblock -r 0

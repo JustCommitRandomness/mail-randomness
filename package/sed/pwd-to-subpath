@@ -1,0 +1,4 @@
+#!/command/execlineb -P
+
+/command/pipeline { /bin/pwd }
+/usr/bin/sed -E -e "s|/log$||" -e "s|.*/||" -e "s|[-_]|/|g"
