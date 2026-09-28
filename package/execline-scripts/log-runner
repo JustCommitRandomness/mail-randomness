@@ -7,7 +7,7 @@ multisubstitute {
 }
 multisubstitute {
 	importas -SD	$LOGUSER		LOGGROUP
-	importas -SsuD 	"t s99999 n10" 		LOGCONTROL
+	importas -SsuD 	"t s99000 n10" 		LOGCONTROL
 	importas -SD  	${LOGDIR}/${there}	SERVICELOG
 	importas -Su				EXTRALOG
 }
