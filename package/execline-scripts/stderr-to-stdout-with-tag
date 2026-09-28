@@ -2,7 +2,7 @@
 /command/importas -D /command/		c	SLASHPACKAGE_COMMAND
 ${c}fdreserve 2
 ${c}multisubstitute {
-	importas -iuD "STDERR:" prefix ERRTAG
+	importas -uD "STDERR:" prefix ERRTAG
 	importas -u read FD0
 	importas -u write FD1
 	multidefine "0 1 2" { stdin stdout stderr } 
