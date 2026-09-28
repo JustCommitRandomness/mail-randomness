@@ -196,7 +196,7 @@ use Carp 'croak';
 use Hash::Util 'lock_keys';
 use Data::Dumper;
 use OpenBSD::Unveil;
-use lib '/home/justin.roberts/dev/package/mail-randomness/package/perllib';
+use lib '/package/mail-randomness/';
 use qmailplugin;
 
 use constant TRUE   => (0 == 0);
