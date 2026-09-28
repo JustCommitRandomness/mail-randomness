@@ -4,6 +4,7 @@ s6-envdir -I ENV
 multisubstitute {
 	importas -SD	_s6_log			LOGUSER
 	importas -ui			there	where
+	importas -Si				LOGDIR
 }
 multisubstitute {
 	importas -SD	$LOGUSER		LOGGROUP

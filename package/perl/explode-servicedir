@@ -1,10 +1,10 @@
 #!/usr/bin/perl
 use strict; use warnings;
 use Cwd 'getcwd';
-my ($base, $where);
+my ($base, $where, $is_log);
 {
   my $cwd = getcwd();
-  $is_log = s~/log$// ? 'log.; : '';
+  $is_log =  ($cwd =~ s!/log/?$!!) ? 'log.' : '';
   my $M_octet	= qr/ (?: [0-1]?[0-9]{1,2} | 2[0-4][0-9] | 25[0-5] ) /x;
   my $M_proto	= qr/(T(?:[Cc][Pp])?|U(?:[Dd][Pp])?)[_-]?/;
   my $M_ip	= qr/($M_octet(?:\.$M_octet){3})/;

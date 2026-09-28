@@ -8,7 +8,7 @@ then
   echo must be run as ./install.sh from the top directory
   exit 1
 fi
-packagemash="${PACKAGEDIR}/"$(basename `pwd`)"/"
+packagemash="${PACKAGEDIR}/admin/"$(basename `pwd`)"/"
 if ! packagedir=`realpath -q "$packagemash"`
 then
   cat <<-COWARDICE
@@ -39,6 +39,32 @@ do
           install -o 0 -g 0 -Cb "$tool" "$packagedir/$tool"
           ln -fs "$packagedir/$tool" "$COMMANDDIR/$tool"
           ls -l "$COMMANDDIR/$tool"
+          ;;
+        esac
+      done
+    )
+  fi
+done
+for dir in perllib
+do
+  if [ -d package/"${dir}" ]
+  then
+    echo "${dir}"/:
+    (
+      cd package/"${dir}"
+
+      for tool in *
+      do
+        case "$tool" in
+        *~)
+          ;;
+        *"#"*)
+          ;;
+        .*)
+          ;;
+        *)
+          install -o 0 -g 0 -Cb "$tool" "$packagedir/$tool"
+          ls -l  "$packagedir/$tool"
           ;;
         esac
       done
