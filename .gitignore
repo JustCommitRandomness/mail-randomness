@@ -1,3 +1,17 @@
 #Emacs
 *~
 \#*\#
+
+*.core
+
+#binaries
+/package/bin/
+/package/libexec/
+
+#compilation
+/src/*.o
+/src/*.out
+/src/*.so
+/src/*.a
+/src/*.lo
+
