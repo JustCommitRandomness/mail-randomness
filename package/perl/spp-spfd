@@ -196,7 +196,7 @@ use Carp 'croak';
 use Hash::Util 'lock_keys';
 use Data::Dumper;
 use OpenBSD::Unveil;
-use lib '/package/mail-randomness/';
+use lib '/package/admin/mail-randomness/';
 use qmailplugin;
 
 use constant TRUE   => (0 == 0);
@@ -219,16 +219,21 @@ unveil();
 
 STDOUT->autoflush(TRUE);
 STDERR->autoflush(TRUE);
-    
-$SIG{'USR1'} = $SIG{'USR2'} = 'IGNORE';
-$SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = sub {
-    my $sig = shift;
-    $sig = 'TERM' if ('HUP' eq $sig);
-    kill('USR1', -$$);
-    $SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
-    print("$$: received $sig ($!)\n");
-    exit 0;
-};
+
+my @defsig;
+{
+    my @igsig = qw{USR1 USR2};
+    @SIG{@igsig} = ('IGNORE') x @igsig;
+    my @passsig = qw{ HUP TERM INT };
+    @SIG{@passsig} = ( sub {
+	my $sig = shift;
+	$sig = 'TERM' if ('HUP' eq $sig);
+	kill('USR1', -$$);
+	$SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
+	print("$$: received $sig ($!)\n");
+	exit 0; } ) x @passsig;
+    @defsig = (@igsig, @passsig);
+}
 my @bouncelevel = qw(fail softfail neutral none error unknown pass);
 my %levelbounce = ('always' => -1);
 $levelbounce{$bouncelevel[$_]} = $_ for (0..$#bouncelevel);
@@ -644,20 +649,22 @@ if (my $forks = opt_or_die('LISTENERS')) {
 }
 # Child process.
 ##############################################################################
-$SIG{'HUP'} = $SIG{'TERM'} = $SIG{'INT'} = 'DEFAULT';
+@SIG{@defsig} = ('DEFAULT') x @defsig;
+$SIG{USR1} = sub { debug('got USR1'); exit 0} if 3< opt('debug');
 
 # Handle Client Connections
 ##############################################################################
 my $socket;
-$socket = $listen_socket->accept();
-$SIG{'USR1'} = 'IGNORE';	# don't die 
-die "Child $$ got an empty socket $!" unless $socket;
-
-close($listen_socket);
-
+{
+    $socket = $listen_socket->accept();
+    debug('$$ got request') if 3 < opt('debug');
+    die "Child $$ got an empty socket $!"
+	unless $socket;
+    $SIG{'USR1'} = 'IGNORE';	# don't die when parent asks idle children to.
+    close($listen_socket);
+}
 # read request
 ##############################################################################
-my $request_values = {};
 while (<$socket>) {
     s/\s+$//;
     last if /^$/;
@@ -677,6 +684,8 @@ while (<$socket>) {
     $opts{$key}->{value} = $value;
 }
     
+# process request
+##############################################################################
 $spf_server->{hostname} = ($opts{TCPLOCALHOST}->{value})
 if $opts{SPF_USETCPLOCALHOST}->{value} && $opts{TCPLOCALHOST}->{value};
     
@@ -708,7 +717,7 @@ catch ($e) {
 #debug(Dumper $result);
 
 
-# Communicate results to caller
+# Send request response
 ##############################################################################
 my $bl = opt('SPFBOUNCELEVEL');
 if (defined $bl) {	#ra-plugins style
