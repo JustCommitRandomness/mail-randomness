@@ -1,17 +1,27 @@
-TARGETS = setclasscontext
 LIBS	= -L/package/prog/skalibs/library
 INCS	= -I/package/prog/skalibs/include
 BINDIR	= ../package/bin/
 
-all: $(TARGETS)
+STAGING	= $(BINDIR)/setclasscontext
+FLYDIRT	= *.o *.a *.lo *.so a.out
 
-.PHONY: all clean install
+all: $(STAGING) .gitignore
 
-install: ${TARGETS}
-	cp $(TARGETS) ../package/bin/
+.PHONY: all distclean realclean clean install
 
-${BINDIR}setclasscontext: setclasscontext.c
-	${CC} ${INCS} -O0 -g -o $@ $< $(LIBS) -lskarnet -lc
+install: $(STAGING)
+	cp $(STAGING) ../package/bin/
 
-clean:
-	-rm *.o *~ \#*\#
+$(BINDIR)/setclasscontext: setclasscontext.c
+	$(CC) $(INCS) -O0 -g -o $@ $> $(LIBS) -lskarnet -lc
+
+clean: distclean
+
+distclean:
+	-rm '$FLYDIRT'
+
+realclean: distclean
+	-rm $(STAGING)
+
+.gitignore:
+	echo -n '$(FLYDIRT)' $(STAGING) | tr ' ' "\\n" > $@

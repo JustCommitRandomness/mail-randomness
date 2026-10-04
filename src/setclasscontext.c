@@ -13,59 +13,57 @@
 
 int main (int argc, char const *const *argv)
 {
-  char ignore = 0;
-  char env = 0;
-  char unset = 0;
-  char do_opts = 1;
-  
-  unsigned int flags = 0;
+  char ignore	= 0;
+  char env	= 0;
+  char unset	= 0;
+  char noop	= 0;
+  char do_opts	= 1;
 
-  argc--; argv++;
-  while (do_opts) {
-    if (2 > argc) dieusage();
-    if ('-' != **argv) break;
-    if ('-' == (*argv)[1] && 0 == (*argv)[2]) {
-      do_opts = 0;
-      break;
-    }
-      
-    const char *o;
-    for (o=argv[0]; *++o && do_opts;)
-      switch (*o) {
-      case 'E' : env = 1 ; break;
-      case 'u' : unset = 1 ; break;
-      case 'i' : ignore = 0 ; break;
-      case 'I' : ignore = 1 ; break;
-      case 'P' : flags |= LOGIN_SETPATH  ; break;
-      case 'N' : flags |= LOGIN_SETPRIORITY  ; break;
-      case 'L' : flags |= LOGIN_SETRESOURCES  ; break;
-      case 'R' : flags |= LOGIN_SETRTABLE  ; break;
-      case 'M' : flags |= LOGIN_SETUMASK  ; break;
-      default: dieusage();
+  unsigned int flags = 0;
+  {
+    subgetopt l = SUBGETOPT_ZERO ;
+    for (;;)
+    {
+      int opt = subgetopt_r(argc, (char const *const *)argv, "EILNPRMiux", &l) ;
+      if (opt == -1) break ;
+      switch (opt)
+      {
+	case 'E' : env = 1 ; break ;
+	case 'u' : unset = 1 ; break ;
+	case 'i' : ignore = 0 ; break ;
+	case 'I' : ignore = 1 ; break ;
+	case 'x' : noop	= 1 ; break ;
+	case 'P' : flags |= LOGIN_SETPATH ; break ;
+	case 'N' : flags |= LOGIN_SETPRIORITY ;	break ;
+	case 'L' : flags |= LOGIN_SETRESOURCES ; break ;
+	case 'R' : flags |= LOGIN_SETRTABLE ; break ;
+	case 'M' : flags |= LOGIN_SETUMASK ; break ;
+      default: dieusage() ;
       }
-    argc--; argv++;
+    }
+    argc -= l.ind ; argv += l.ind ;
   }
   if (!flags) {
-    strerr_warn("nothing to set");
-    if (ignore) goto end;
-    exit(103);
+    if (ignore) goto end ;
+    strerr_warn("nothing to set, defaulting to limits") ;
+    flags = LOGIN_SETRESOURCES;
   }
-  const char *class = env ? getenv(*argv) : *argv;
+  const char *class = env ? getenv(*argv) : *argv ;
   {
     if (!class) {
-      if (ignore) goto end;
-      strerr_die(101, "environment variable '", *argv, "' not set");
+      if (ignore) goto end ;
+      strerr_die(101, "environment variable '", *argv, "' not set") ;
     }
-    if (!*class) class = "default";
-    if (unset && env) unsetenv(*argv);
-    argc--; argv++;
+    if (!*class) class = "default" ;
+    if (unset && env) unsetenv(*argv) ;
+    argc--; argv++ ;
     if (setclasscontext(class, flags)) {
-      if (ignore) goto end;
-      strerr_die(102, "setclasscontext failed: ", strerror(errno));
+      if (ignore) goto end ;
+      strerr_die(102, "setclasscontext failed: ", strerror(errno)) ;
     }
   }
 
  end:
-  xexec(argv);
+  xexec(argv) ;
 }
- 
+
