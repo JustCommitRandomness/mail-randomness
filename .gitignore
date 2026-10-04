@@ -4,5 +4,9 @@
 .dir-locals.el
 
 # binaries
-/package/bin
-/package/libexec
+/package/bin/
+/package/libexec/
+
+# test
+
+/test/
