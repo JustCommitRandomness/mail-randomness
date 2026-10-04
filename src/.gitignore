@@ -1,0 +1,6 @@
+*.o
+*.a
+*.lo
+*.so
+a.out
+../package/bin//setclasscontext
