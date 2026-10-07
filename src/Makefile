@@ -2,7 +2,10 @@ LIBS	= -L/package/prog/skalibs/library
 INCS	= -I/package/prog/skalibs/include
 BINDIR	= ../package/bin/
 
-STAGING	= $(BINDIR)/setclasscontext
+STAGING	= \
+	$(BINDIR)/setclasscontext	\
+	$(BINDIR)/explode-servicedir	\
+
 FLYDIRT	= *.o *.a *.lo *.so a.out
 
 all: $(STAGING) .gitignore
@@ -13,6 +16,9 @@ install: $(STAGING)
 	cp $(STAGING) ../package/bin/
 
 $(BINDIR)/setclasscontext: setclasscontext.c
+	$(CC) $(INCS) -O0 -g -o $@ $> $(LIBS) -lskarnet -lc
+
+$(BINDIR)/explode-servicedir: explode-servicedir.c
 	$(CC) $(INCS) -O0 -g -o $@ $> $(LIBS) -lskarnet -lc
 
 clean: distclean
