@@ -8,5 +8,7 @@
 /package/libexec/
 
 # test
-
 /test/
+
+#stuff
+*.core
