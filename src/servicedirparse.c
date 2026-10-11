@@ -1,15 +1,16 @@
 #define COMMA ,
 #define N(...) X(__VA_ARGS__)
-#define PARSEPART					\
-  X(basename,,) X(base,,)				\
+#define PARSEPART 	X(zero,,)			\
+  X(dir,,) X(basename,,) X(base,,)			\
     X(exts, int count ; char *start ;			\
       , .exts.next = exts_n, .exts.start = NULL )	\
     N(protopart,,) N(verpart,,)				\
     N(netpart,,) N(prefixpart,,) N(addrpart,,)		\
     N(portpart,,) N(topart,,)				\
-    N(invalid,, .invalid.next = exts_n )
+    N(invalid,, .invalid.next = exts_n )		\
+    X(parts_END,,)
 #define X(part,...) part ## _n ,
-    typedef enum { PARSEPART part_NULL } enum_parts;
+typedef enum { PARSEPART part_NULL } enum_parts;
 #undef X
 #define X(part, FIELDS,...) typedef struct					\
 			{ const enum_parts next ; FIELDS } struct_ ## part ;
@@ -52,20 +53,22 @@ struct_parts parts[] = { PARSEPART {0} };
 #undef X
 #undef N
 #define N(...) X(__VA_ARGS__)
+struct parsed_field {
+  enum_parts part;
+  char const *name;
+  short len;
+  char const *const *value;
+};
+struct parsed { char const *const join; struct parsed_field const fields[]; };
+typedef enum { Separator, EndCmd, NetPart, RulesMAX} enum_rules ;
+typedef char const *Rules[RulesMAX];
+Rules const* rules = NULL;
+Rules newstyle	      = { "_-.", "_",  ":"  } ;
+Rules const tosubpath = { "_-",  "_-", ""   } ;
+Rules const toip      = { "",    "",   "-_" } ;
 
-#define PARSECOUNT X(l) X(ext) X(4dot) X(6colon) X(6coloncolon)
-#define X(count) uint c_##count ;
-    PARSECOUNT ;
-#undef X
-
-typedef enum { Separator, EndCmd, NetPart, RulesEND} enum_rules ;
-const char *const *rules = NULL;
-
-const char *const pending     = "mmmmaybeeee??" ;
-const char *const none        = "nothing to see" ;
-const char **newstyle	      = (const char *[]){ "_-.", "_",  ":", NULL  } ;
-const char *const tosubpath[] = { "_-",  "_-", "", NULL   } ;
-const char *const toip[]      = { "",    "",   "-_", NULL } ;
+const char *const pending     = "maybe or maybe not"  ;
+const char *const none        = &pending[9] ;
 
 typedef enum {
   vnone,

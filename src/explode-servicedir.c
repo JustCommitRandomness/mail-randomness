@@ -44,49 +44,16 @@ const char* validatepart(struct_parts parts[], enum_parts p, uint i) {
   return NULL;
 }
 
-int main(int argc, char const *const *argv) {
-  {
-    const char *av = argc && argv ? strrchr(argv[0], '/') : "/<undef>";
-    av = av ? av+1 : argv[0] ? argv[0] : "<NULL>";
-    if (strcmp("pwd-to-subpath", argv[0])) rules = tosubpath ; 
-    else if (strcmp("pwd-to-ip", argv[0])) rules = toip ;
-    else rules = newstyle ;
-  }
-  if (*newstyle) {
-    subgetopt l = SUBGETOPT_ZERO ;
-    for (;;)
-    {
-      int opt = subgetopt_r(argc, (char const *const *)argv, "b:d:p:", &l) ;
-      if (opt == -1) break ;
-      switch (opt)
-      {
-      case 'd': newstyle[Separator] = l.arg ; break ;
-      case 'b': newstyle[EndCmd] = l.arg ; break ;
-      case 'p': newstyle[NetPart] = l.arg ; break ;
-      default: dieusage() ;
-      }
-    }
-    argc -= l.ind ; argv += l.ind ;
-  }
-  char *path = getcwd(NULL, 0) ;
-  if (!path) strerr_diefu1sys(111, "getcwd failed") ;
-  if (!*path) strerr_dief(111, "getcwd returned an empty path") ;
-  if ('/' != *path) {
-    strerr_warn("getcwd gave a relative path: '", path, "'");
-    char *t = path;
-    path = realpath(path, NULL);
-    if (!path) strerr_diefu1sys(111, "realpath failed") ;
-    if (!*path) strerr_dief(111, "realpath returned an empty path") ;
-    if ('/' != *path)
-      strerr_warn("realpath gave a relative path: '", path, "'");
-  }
+
+struct parsed *doparse(char *const path, Rules const rules, struct parsed *parsed) {
   char *pcpy = strdup(path) ;
   if (!pcpy) strerr_diefu2sys(111, "strdup failed to copy", path) ;
   {
     enum_addrtype addrtype = 0 ;
   }
-
+  
 #define NEXTPARTIS(_part) {						\
+    if (parts_END == _part) parts[parts_END].parts_end.next = curpart;	\
     do {								\
       if (parts[curpart].part &&					\
 	  (parts[invalid_n].part = validatepart(parts, curpart, i))) {	\
@@ -104,7 +71,7 @@ int main(int argc, char const *const *argv) {
   char *lastslash = NULL ;
   uint i, unwind = 1 ;
   enum_parts curpart = start_n ;
-  for (i = c_l = 0;; i++, c_l++, parts[curpart].part && parts[curpart].len++) {
+  for (i = 0; curpart < parts_END; i++, parts[curpart].part && parts[curpart].len++) {
     char p, UP, pn, pp;
     goto rewound;
   unwind:
@@ -118,7 +85,9 @@ int main(int argc, char const *const *argv) {
     p = path[i] ;		/* current char */
     pn = path[i+1] ;		/* look ahead */
     pp = i ? pcpy[i-1] : 0 ;	/* look behind */
-    
+
+    if (!p) NEXTPARTIS(parts_END);
+	      
       /* path componets reset everything. we might have wasted time
        * processing it, but probably not much longer than strrchr-ing
        * it first
@@ -211,9 +180,11 @@ int main(int argc, char const *const *argv) {
   for (enum_parts j=0; curpart >= j; j++)
     printf("parts[%u](%s) = '%s'[%u]\n", j, parts[j].name, parts[j].part, parts[j].len);
   
-	 
-	 
-
+  for (struct parsed_field const *f = &parsed->fields[0]; f ;++f) {
+    printf("asked for %s(%u)\n", f->name, f->part);
+  };
+  return parsed;
+  
   /* { */
   /*   char *lastslash = NULL; */
   /*   char *basename; */
@@ -299,3 +270,46 @@ int main(int argc, char const *const *argv) {
       /* 	  goto unwind; */
       /* 	} */
       /* } */
+int main(int argc, char const *const *argv) {
+  char *path = NULL;
+  {
+    const char *av = argc && argv ? strrchr(argv[0], '/') : "/<undef>";
+    av = av ? av+1 : argv[0] ? argv[0] : "<NULL>";
+    if (strcmp("pwd-to-subpath", argv[0])) rules = &tosubpath ; 
+    else if (strcmp("pwd-to-ip", argv[0])) rules = &toip ;
+    else rules = &newstyle ;
+  }
+  if (*newstyle) {
+    subgetopt l = SUBGETOPT_ZERO ;
+    for (;;)
+    {
+      int opt = subgetopt_r(argc, (char const *const *)argv, "b:d:p:P:", &l) ;
+      if (opt == -1) break ;
+      switch (opt)
+      {
+      case 'd': newstyle[Separator] = l.arg ; break ;
+      case 'b': newstyle[EndCmd] = l.arg ; break ;
+      case 'p': newstyle[NetPart] = l.arg ; break ;
+      case 'P': path = (char *)l.arg ; break ;
+      default: dieusage() ;
+      }
+    }
+    argc -= l.ind ; argv += l.ind ;
+  }
+  if (!path) {
+    path = getcwd(NULL, 0) ;
+    if (!path) strerr_diefu1sys(111, "getcwd failed") ;
+    if (!*path) strerr_dief(111, "getcwd returned an empty path") ;
+  }
+  if ('/' != *path) {
+    strerr_warn("getcwd gave a relative path: '", path, "'") ;
+    path = realpath(path, NULL) ;
+    if (!path) strerr_diefu1sys(111, "realpath failed") ;
+    if (!*path) strerr_dief(111, "realpath returned an empty path") ;
+    if ('/' != *path)
+      strerr_warn("realpath gave a relative path: '", path, "'");
+  }
+  static struct parsed parsed = {NULL, {{base_n, "base"},{dir_n,"dirname"},{0}}};
+  doparse(path, *rules, &parsed);
+}
+
