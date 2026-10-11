@@ -6,37 +6,14 @@
 #include <skalibs/exec.h>
 #include <skalibs/sgetopt.h>
 
+#include "servicedirparse.i"
+
 #define PROG "explode_dir"
 #define USAGE PROG " [ -b basedelim ] [ -d delim ] [ -p portdelim ] [--] class prog..."
 #define dieusage() strerr_dieusage(100, USAGE)
 
 #define NUL '\0'
-#define COMMA ,
-/* #define LC(x) ((x)|('a'-'A')) */
-#define UC(x) ((x)&~('a'-'A'))
 
-/* enum state { */
-/*   NEW_DIR, */
-/*   IN_BASE, */
-/*   IN_EXT, */
-/*   IN_NETCFG, */
-/*   IN_PROTO, */
-/*   IN_VER, */
-/*   IN_ADDR, */
-/* } ; */
-
-/* #define IN(c,s) {\ */
-    
-enum parts { Separator, EndCmd, NetPart };
-
-// The flat parameter arrays mapped to your enum indices
-const char **newstyle	      = (const char *[]){ "_-.", "_",  ":"  } ;
-const char *const tosubpath[] = { "_-",  "_-", ""   } ;
-const char *const toip[]      = { "",    "",   "-_" } ;
-const char *const *rules;
-
-const char *const v6chars = "0123456789:abcdef";
-const char *const v4chars = ".0123456789";
 /* a full netspec is:
  * :tcp:ipv4:192.168.1.0+28:192.168.1.5:5000-6000
  * or
@@ -46,6 +23,26 @@ const char *const v4chars = ".0123456789";
  * however, I'm currently planning to impelement
  * 192.168.1.1:53
  */
+
+const char* validatepart(struct_parts parts[], enum_parts p, uint i) {
+  struct_parts part = parts[p];
+  switch (p) {
+  case basename_n:
+    break;
+  case base_n:
+    {
+      parts[basename_n].part = part.part;
+      parts[basename_n].len = part.len;
+      { const char *c = validatepart(parts, basename_n, i); if (c) return c; }
+    }
+    break;
+  case invalid_n:
+    strerr_dief(100, part.part); 
+  default:
+    strerr_warn("unhandled ", part.name);
+  }
+  return NULL;
+}
 
 int main(int argc, char const *const *argv) {
   {
@@ -86,79 +83,137 @@ int main(int argc, char const *const *argv) {
   char *pcpy = strdup(path) ;
   if (!pcpy) strerr_diefu2sys(111, "strdup failed to copy", path) ;
   {
-#define PARSEPART \
-    X(base) X(basename) X(exts) X(addrpart) X(portpart) X(topart) X(addr)
-#define PARSECOUNT X(l) X(ext)
-    char *gotaddr = NULL ;
-    char *addrtype = NULL ;
-    char *lastslash = NULL ;
-#define X(part) char * part ;
-    PARSEPART ;
-#undef X
-#define X(count) uint count ;
-    PARSECOUNT ;
-#undef X
-    size_t i, unwind = 1;
-    for (i = l = 0; path[i]; i++, l++) {
-      if ('/' == path[i]) {
-	if (path[1+i]) {
-	  lastslash && (*lastslash='/') ;
-	  *(lastslash = &path[i]) = NUL ;
-	    goto reset;
-	} else {
-	  if (!i)
-	    strerr_die(100, "should be called from a service directory") ;
-	  /* huh? a trailing slash. never mind */
-	  goto unwind;
-	}
-	continue;
-      }
-      if (addrpart) {
-	if (strchr(addrtype, UC(path[i]))) continue;
-	if (strchr(rules[NetPart], path[i])
-	    || strchr(rules[Separator], path[i])) {
-	  if (addrpart == &pcpy[i]) { /* haven't started */
-	    pcpy[i] = NUL;
-	    addrpart++;
-	    continue;
-	  }
-	  pcpy[i] = NUL ;
-	  gotaddr = addrpart ;
-	  addr = NULL ;
-	  goto unwind ;
-	}
-	/* uh-oh, this isn't an address. lets try again as a port */
-	unwind = &pcpy[i] - addrpart ;
-	portpart = addrpart ;
-	addrpart = NULL ;
-	goto unwind ;
-      }
-      if (strchr(rules[NetPart], pcpy[i])) {
-	pcpy[i] = 0;
-	if (toip == rules) {
-	  addrpart = &pcpy[i]+1;
-	  continue;
-	}
-	if (portpart && toip != rules) {
-	  strerr_warn("garbage at end of net spec '", &pcpy[i], "'");
-	  pcpy[i] = rules[Separator][0];
-	  goto unwind;
-	}
-      }
-      continue;
-    reset: /*damn, a subpath*/
-#define X(part) part = NULL;
-      PARSEPART ;
-#undef X
-#define X(count) count = 0;      
-      PARSECOUNT ;
-#undef X
-      continue;
-    unwind:
-      i -= unwind; l -= unwind; unwind = 1;
-      
-    }
+    enum_addrtype addrtype = 0 ;
   }
+
+#define NEXTPARTIS(_part) {						\
+    do {								\
+      if (parts[curpart].part &&					\
+	  (parts[invalid_n].part = validatepart(parts, curpart, i))) {	\
+	curpart = invalid_n;						\
+	break;								\
+      }									\
+      ++curpart;							\
+      if (_part < curpart) curpart = _part ;				\
+    } while ( _part > curpart) ;					\
+    if (pn || invalid_n == curpart) continue ;				\
+    break;								\
+  }
+#define NEXTPART NEXTPARTIS(parts[curpart].access.next)
+  
+  char *lastslash = NULL ;
+  uint i, unwind = 1 ;
+  enum_parts curpart = start_n ;
+  for (i = c_l = 0;; i++, c_l++, parts[curpart].part && parts[curpart].len++) {
+    char p, UP, pn, pp;
+    goto rewound;
+  unwind:
+    i -= unwind;
+    parts[curpart].len = ( unwind >= parts[curpart].len )
+      ? 0 : parts[curpart].len - unwind ;
+    parts[curpart].len || ( parts[curpart].part = NULL ) ;
+    unwind = 1;
+
+  rewound:
+    p = path[i] ;		/* current char */
+    pn = path[i+1] ;		/* look ahead */
+    pp = i ? pcpy[i-1] : 0 ;	/* look behind */
+    
+      /* path componets reset everything. we might have wasted time
+       * processing it, but probably not much longer than strrchr-ing
+       * it first
+       */
+    if ('/' == p) {
+      if (pn) {
+	lastslash && (*lastslash='/') ;
+	*(lastslash = &path[i]) = NUL ;
+	goto reset;
+      } else {
+	if (!i) strerr_die(100, "should not be run from /") ;
+	path[i] = pcpy[i] = NUL;
+	goto unwind;
+      }
+    }
+    if (invalid_n == curpart) {
+      if (!p) strerr_die(100, "directory name was invalid: ", parts[invalid_n].part);
+      else continue ; }/* looking for a / to reset everything	*/
+    
+    if (strchr(rules[NetPart], p)) {
+      if (netspec_n > curpart) { /* we are now  */
+	pcpy[i] = '/' ;
+	NEXTPARTIS(netspec_n) ;
+      }
+      if (!parts[curpart].part) {
+	NEXTPART;
+      }
+    }
+    
+      /*
+       * Advance to the next netspec if the current isn't implemented.
+       *
+       * There is a risk that as functionality is added, it might
+       * change how a spec is parsed.
+       *
+       * I *think* this should be backwards compatability safe as it
+       * comes after manual net spec jumps, which are the only
+       * "forwards" compatability feature that nbeeds to be considered,
+       * given the no backtrack fail forward design which means each
+       * netcomponent is incompatible with its predecessors
+       * (except toport)
+       *
+       * This assumption will fail if a path includes an unimplemented
+       * netspec feature, but forward compatibility of yet to be
+       * implemented features would require implementing them, so the
+       * program would fail in that case anyway.
+       */
+    for(;unimplemented & curpart;curpart++)
+      strerr_warn("skipping ", parts[curpart].name);
+    
+    if (start_n == curpart) {	/* should be base_n */
+      if (strchr(rules[EndCmd], p)) {
+	pcpy[i] = NUL;
+	NEXTPART;
+      }
+      if (!parts[curpart].part)
+	parts[curpart].part = &path[i];
+      continue;
+    }
+
+    if (exts_n == curpart) {
+      if (strchr(rules[Separator], p)) {
+	pcpy[i] = NUL ;
+	NEXTPART ;
+      }
+      if (!parts[curpart].part) {
+	parts[curpart].part = &pcpy[i];
+	if (!parts[exts_n].exts.start)
+	  parts[exts_n].exts.start = &pcpy[i];
+      }
+    }
+    strerr_warn("continuring for ", parts[curpart].name); 
+    continue;
+ reset: /*damn, a subpath*/
+    curpart = 0;
+    for (int i = 0; part_NULL > i; ++i) {
+      parts[i].part = NULL;
+      parts[i].len = 0;
+      /* NB. modifications to pcpy haven't been reset, but the path part
+       * should be discarded anyway
+       */
+    }
+    pcpy[i] = NUL;
+    curpart = start_n;
+    continue;
+  } /* for */
+
+#include <stdio.h>
+  printf("we escaped at position %u: %d\n", i, curpart);
+  for (enum_parts j=0; curpart >= j; j++)
+    printf("parts[%u](%s) = '%s'[%u]\n", j, parts[j].name, parts[j].part, parts[j].len);
+  
+	 
+	 
+
   /* { */
   /*   char *lastslash = NULL; */
   /*   char *basename; */
@@ -194,3 +249,53 @@ int main(int argc, char const *const *argv) {
 	    
   
 }
+    /* /\* So we check the parts from last to first so we don;t waste	*\/ */
+    /* /\* time on completed components					*\/ */
+      /* if (pending == addrpart) */
+      /* if (addrpart) { */
+      /* 	if (strchr(rules[NetPart], p) */
+      /* 	    ||  strchr(rules[Separator], p)) { */
+      /* 	  if (!addrtype) { /\* haven't started *\/ */
+      /* 	    pcpy[i] = '/' ; */
+      /* 	    addrpart++; */
+      /* 	    /\* OK, so we're just going to pretend it didn't happen	*\/ */
+      /* 	    /\* later versions may use it to explicitly advance to the 	*\/ */
+      /* 	    /\* next componet of a net spec.				*\/ */
+      /* 	    continue; */
+      /* 	} */
+      /* 	pcpy[i] = '/' ; */
+
+	
+      /* 	goto unwind ; */
+      /* } */
+      /* if (strchr(rules[Separator], p)) { */
+      /* 	if (!addrtype) {/\* don't know what we are yet *\/ */
+      /* 	  addrtype = v4orv6; */
+      /* 	  continue ; */
+      /* 	} */
+	
+	
+
+      /* } */
+      /* if (strchr(addrchars[addrtype], UC(path[i]))) continue ; */
+      /* for (enum AddrType t = v4; t; t = v4 == t ? v6 : 0) */
+      /* 	if (!strchr(addrchars[t], UC(path[i]))) addrtype &= ~t; */
+      /* if (!addrtype) */
+      /* 	/\* uh-oh, this isn't an address. lets try again as a port *\/ */
+      /* 	unwind = &pcpy[i] - addrpart ; */
+      /* 	portpart = addrpart ; */
+      /* 	addrpart = NULL ; */
+      /* 	goto unwind ; */
+      /* } */
+      /* if (strchr(rules[NetPart], pcpy[i])) { */
+      /* 	pcpy[i] = '/'; */
+      /* 	if (toip == rules) { */
+      /* 	  addrpart = &pcpy[i]+1; */
+      /* 	  continue; */
+      /* 	} */
+      /* 	if (portpart && toip != rules) { */
+      /* 	  strerr_warn("garbage at end of net spec '", &pcpy[i], "'"); */
+      /* 	  pcpy[i] = rules[Separator][0]; */
+      /* 	  goto unwind; */
+      /* 	} */
+      /* } */
