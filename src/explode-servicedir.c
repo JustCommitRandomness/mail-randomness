@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdio.h>
 
 #include <skalibs/strerr.h>
 #include <skalibs/exec.h>
@@ -24,24 +25,41 @@
  * 192.168.1.1:53
  */
 
-const char* validatepart(struct_parts parts[], enum_parts p, uint i) {
-  struct_parts part = parts[p];
+const char* validatepart(struct_parts (*parts)[], enum_parts p, uint i) {
+  struct_parts part = (*parts)[p] ;
   switch (p) {
+
   case basename_n:
-    break;
+    break ;
   case base_n:
     {
-      parts[basename_n].part = part.part;
-      parts[basename_n].len = part.len;
-      { const char *c = validatepart(parts, basename_n, i); if (c) return c; }
+      (*parts)[basename_n].part = part.part ;
+      (*parts)[basename_n].len = part.len ;
+      { const char *c = validatepart(parts, basename_n, i) ; if (c) return c ; }
     }
-    break;
+    break ;
   case invalid_n:
-    strerr_dief(100, part.part); 
+    strerr_dief(100, part.part) ;
   default:
-    strerr_warn("unhandled ", part.name);
+    strerr_warn("unhandled ", part.name) ;
   }
-  return NULL;
+  return NULL ;
+}
+
+int nextpartis(enum_parts *cp, enum_parts _part, struct_parts (*parts)[], int i, char n) {
+  if (parts_END_n == _part) (*parts)[parts_END_n].parts_END.from = *cp ;
+  do {
+    if ((*parts)[*cp].part &&
+	((*parts)[invalid_n].part
+	 = validatepart(parts, *cp, i))) {
+      *cp = invalid_n ;
+	break ;
+    }
+    ++(*cp) ;
+    if (_part < *cp) *cp = _part ;
+  } while ( _part > *cp) ;
+  if (n || invalid_n == *cp) return 1 ;
+  return 0 ;
 }
 
 
@@ -51,72 +69,76 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
   {
     enum_addrtype addrtype = 0 ;
   }
-  
-#define NEXTPARTIS(_part) {						\
-    if (parts_END == _part) parts[parts_END].parts_end.next = curpart;	\
-    do {								\
-      if (parts[curpart].part &&					\
-	  (parts[invalid_n].part = validatepart(parts, curpart, i))) {	\
-	curpart = invalid_n;						\
-	break;								\
-      }									\
-      ++curpart;							\
-      if (_part < curpart) curpart = _part ;				\
-    } while ( _part > curpart) ;					\
-    if (pn || invalid_n == curpart) continue ;				\
-    break;								\
-  }
-#define NEXTPART NEXTPARTIS(parts[curpart].access.next)
-  
+  parts[dir_n].part = path ;
+
+#define NEXTPARTIS(_part) { if(nextpartis(&curpart,_part,&parts,i,pn))continue ;break ;}
+#define NEXTPART NEXTPARTIS(part->access.next)
+#define SETCURPART(_part) part = &parts[curpart = _part]
+
   char *lastslash = NULL ;
   uint i, unwind = 1 ;
-  enum_parts curpart = start_n ;
-  for (i = 0; curpart < parts_END; i++, parts[curpart].part && parts[curpart].len++) {
-    char p, UP, pn, pp;
-    goto rewound;
+  enum_parts curpart ;
+  struct_parts *part ;
+  SETCURPART(start_n) ;
+  for (i = 0 ; curpart < parts_END_n ; i++, part->part && part->len++) {
+    char p, UP, pn, pp ;
+    goto rewound ;
   unwind:
-    i -= unwind;
-    parts[curpart].len = ( unwind >= parts[curpart].len )
-      ? 0 : parts[curpart].len - unwind ;
-    parts[curpart].len || ( parts[curpart].part = NULL ) ;
-    unwind = 1;
+    i -= unwind ;
+    parts->len = ( unwind >= part->len )
+      ? 0 : part->len - unwind ;
+    part->len || ( part->part = NULL ) ;
+    unwind = 1 ;
 
   rewound:
     p = path[i] ;		/* current char */
     pn = path[i+1] ;		/* look ahead */
-    pp = i ? pcpy[i-1] : 0 ;	/* look behind */
+    pp = i ? pcpy[i-1] : NUL ;	/* look behind */
 
-    if (!p) NEXTPARTIS(parts_END);
-	      
+    if (!p) NEXTPARTIS(parts_END_n) ;
+
       /* path componets reset everything. we might have wasted time
        * processing it, but probably not much longer than strrchr-ing
        * it first
        */
     if ('/' == p) {
       if (pn) {
+	char const *cmp ;
+	char const *ref ;
+	for ( cmp = &path[i+1], ref = parts[log_n].log.name
+	       ; *ref && *ref == *cmp
+	       ; cmp++, ref++, parts[log_n].len++) ;
+	for ( ;'/' == *ref ; ref++) ;
+	if (*cmp == *ref) {
+	  parts[log_n].part = &path[i+1] ;
+	  pn = NUL ;
+	} else parts[log_n].len = 0 ;
+      }
+      if (pn) {
 	lastslash && (*lastslash='/') ;
 	*(lastslash = &path[i]) = NUL ;
-	goto reset;
+	parts[dir_n].len = i ;
+	goto reset ;
       } else {
 	if (!i) strerr_die(100, "should not be run from /") ;
-	path[i] = pcpy[i] = NUL;
-	goto unwind;
+	path[i] = pcpy[i] = NUL ;
+	goto unwind ;
       }
     }
     if (invalid_n == curpart) {
-      if (!p) strerr_die(100, "directory name was invalid: ", parts[invalid_n].part);
+      if (!p) strerr_die(100, "directory name was invalid: ", parts[invalid_n].part) ;
       else continue ; }/* looking for a / to reset everything	*/
-    
+
     if (strchr(rules[NetPart], p)) {
       if (netspec_n > curpart) { /* we are now  */
 	pcpy[i] = '/' ;
 	NEXTPARTIS(netspec_n) ;
       }
-      if (!parts[curpart].part) {
-	NEXTPART;
+      if (!part->part) {
+	NEXTPART ;
       }
     }
-    
+
       /*
        * Advance to the next netspec if the current isn't implemented.
        *
@@ -135,17 +157,21 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
        * implemented features would require implementing them, so the
        * program would fail in that case anyway.
        */
-    for(;unimplemented & curpart;curpart++)
-      strerr_warn("skipping ", parts[curpart].name);
-    
+    {
+      while (unimplemented & curpart) {
+	strerr_warn("skipping ", part->name) ;
+	SETCURPART(curpart+1) ;
+      }
+      part = &parts[curpart] ;
+    }
     if (start_n == curpart) {	/* should be base_n */
       if (strchr(rules[EndCmd], p)) {
-	pcpy[i] = NUL;
-	NEXTPART;
+	pcpy[i] = NUL ;
+	NEXTPART ;
       }
-      if (!parts[curpart].part)
-	parts[curpart].part = &path[i];
-      continue;
+      if (!part->part)
+	part->part = &path[i] ;
+      continue ;
     }
 
     if (exts_n == curpart) {
@@ -153,135 +179,70 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
 	pcpy[i] = NUL ;
 	NEXTPART ;
       }
-      if (!parts[curpart].part) {
-	parts[curpart].part = &pcpy[i];
+      if (!part->part) {
+	part->part = &pcpy[i] ;
 	if (!parts[exts_n].exts.start)
-	  parts[exts_n].exts.start = &pcpy[i];
+	  parts[exts_n].exts.start = &pcpy[i] ;
       }
     }
-    strerr_warn("continuring for ", parts[curpart].name); 
-    continue;
+    strerr_warn("continuring for ", part->name) ;
+    continue ;
  reset: /*damn, a subpath*/
-    curpart = 0;
-    for (int i = 0; part_NULL > i; ++i) {
-      parts[i].part = NULL;
-      parts[i].len = 0;
+    SETCURPART(start_n) ;
+    for (int i = start_n ; part_NULL > i ; ++i) {
+      parts[i].part = NULL ;
+      parts[i].len = 0 ;
       /* NB. modifications to pcpy haven't been reset, but the path part
        * should be discarded anyway
        */
     }
-    pcpy[i] = NUL;
-    curpart = start_n;
-    continue;
+    pcpy[i] = NUL ;
+    curpart = start_n ;
+    continue ;
   } /* for */
+  if (parts_END_n != curpart)
+    strerr_warn("Unexpected exit") ;
+  else SETCURPART(part->parts_END.from) ;
 
-#include <stdio.h>
-  printf("we escaped at position %u: %d\n", i, curpart);
-  for (enum_parts j=0; curpart >= j; j++)
-    printf("parts[%u](%s) = '%s'[%u]\n", j, parts[j].name, parts[j].part, parts[j].len);
-  
-  for (struct parsed_field const *f = &parsed->fields[0]; f ;++f) {
-    printf("asked for %s(%u)\n", f->name, f->part);
-  };
-  return parsed;
-  
-  /* { */
-  /*   char *lastslash = NULL; */
-  /*   char *basename; */
-  /*   char *base; */
-  /*   const char *const netspec = {{{"", "T", "TCP", "Tcp", "t", "tcp"}, */
-  /* 				  {"U", "UDP", "Udp", "u", "udp"}}, */
-  /* 				 {{"", "-", ":", "_"}}, */
-  /* 				 {{"", "4", "i4", "ip4", "ipv4"}, */
-  /* 				  {"6", "i6", "ip6", "ipv6"}}, */
-  /* 				 {{"", "-", ":", "_"}}, */
-  /* 				 {{""}, */
-  /* 				  {"\b.\b.\b.\b"}, */
-  /* 				  {"\b.\b.\b.\b^\a"}, */
-				 
-  /* 				 {{"", "-", ":", "_"}}, */
-      
-    
-  /*   int state = NEW_DIR ; */
-  /*   for (char *p = path, char *c = pcpy; *p; ++p) { */
-  /*     if ('/' == *c) { */
-  /* 	lastslash && *lastslash = '/'; */
-  /* 	lastslash = p; */
-  /* 	*p = NULL; */
-  /* 	state = NEW_DIR; */
-  /*     } */
-  /*     if (NEW_DIR == state) { */
-  /* 	basename = p; */
-  /* 	base = c; */
-  /* 	state == IN_BASE; */
-  /*     } */
-      
-		       
-	    
-  
-}
-    /* /\* So we check the parts from last to first so we don;t waste	*\/ */
-    /* /\* time on completed components					*\/ */
-      /* if (pending == addrpart) */
-      /* if (addrpart) { */
-      /* 	if (strchr(rules[NetPart], p) */
-      /* 	    ||  strchr(rules[Separator], p)) { */
-      /* 	  if (!addrtype) { /\* haven't started *\/ */
-      /* 	    pcpy[i] = '/' ; */
-      /* 	    addrpart++; */
-      /* 	    /\* OK, so we're just going to pretend it didn't happen	*\/ */
-      /* 	    /\* later versions may use it to explicitly advance to the 	*\/ */
-      /* 	    /\* next componet of a net spec.				*\/ */
-      /* 	    continue; */
-      /* 	} */
-      /* 	pcpy[i] = '/' ; */
 
-	
-      /* 	goto unwind ; */
-      /* } */
-      /* if (strchr(rules[Separator], p)) { */
-      /* 	if (!addrtype) {/\* don't know what we are yet *\/ */
-      /* 	  addrtype = v4orv6; */
-      /* 	  continue ; */
-      /* 	} */
-	
-	
-
-      /* } */
-      /* if (strchr(addrchars[addrtype], UC(path[i]))) continue ; */
-      /* for (enum AddrType t = v4; t; t = v4 == t ? v6 : 0) */
-      /* 	if (!strchr(addrchars[t], UC(path[i]))) addrtype &= ~t; */
-      /* if (!addrtype) */
-      /* 	/\* uh-oh, this isn't an address. lets try again as a port *\/ */
-      /* 	unwind = &pcpy[i] - addrpart ; */
-      /* 	portpart = addrpart ; */
-      /* 	addrpart = NULL ; */
-      /* 	goto unwind ; */
-      /* } */
-      /* if (strchr(rules[NetPart], pcpy[i])) { */
-      /* 	pcpy[i] = '/'; */
-      /* 	if (toip == rules) { */
-      /* 	  addrpart = &pcpy[i]+1; */
-      /* 	  continue; */
-      /* 	} */
-      /* 	if (portpart && toip != rules) { */
-      /* 	  strerr_warn("garbage at end of net spec '", &pcpy[i], "'"); */
-      /* 	  pcpy[i] = rules[Separator][0]; */
-      /* 	  goto unwind; */
-      /* 	} */
-      /* } */
-int main(int argc, char const *const *argv) {
-  char *path = NULL;
+  printf("we escaped at position %u: %d\n", i, curpart) ;
+  for (enum_parts j=0 ; curpart >= j ; j++)
+    printf("parts[%u](%s) = '%s'[%u]\n",
+	   j, parts[j].name, parts[j].part, parts[j].len) ;
   {
-    const char *av = argc && argv ? strrchr(argv[0], '/') : "/<undef>";
-    av = av ? av+1 : argv[0] ? argv[0] : "<NULL>";
-    if (strcmp("pwd-to-subpath", argv[0])) rules = &tosubpath ; 
+    struct parsed_field *ret ;
+    enum_parts id ;
+    struct_parts const *part ; 	/* you cant touch this */
+    for (ret = &parsed->fields[0] ; (id = ret->part) ; ++ret) {
+      part = &parts[id] ;
+      if (part->part) {
+	if (ret->value) {
+	  strncpy(ret->value, part->part, ret->len) ;
+	  if (part->len <= ret->len) ret->len = part->len ;
+	  else ret->value[ret->len - 1] = NUL ;
+	} else {
+	  ret->value = strdup(part->part) ;
+	  ret->len = part->len ;
+	}
+	if (!ret->name) ret->name = part->name ;
+      }
+    }
+  }
+  return parsed ;
+}
+
+int main(int argc, char const *const *argv) {
+  char *path = NULL ;
+  {
+    const char *av = argc && argv ? strrchr(argv[0], '/') : "/<undef>" ;
+    av = av ? av+1 : argv[0] ? argv[0] : "<NULL>" ;
+    if (strcmp("pwd-to-subpath", argv[0])) rules = &tosubpath ;
     else if (strcmp("pwd-to-ip", argv[0])) rules = &toip ;
     else rules = &newstyle ;
   }
   if (*newstyle) {
     subgetopt l = SUBGETOPT_ZERO ;
-    for (;;)
+    for ( ; ; )
     {
       int opt = subgetopt_r(argc, (char const *const *)argv, "b:d:p:P:", &l) ;
       if (opt == -1) break ;
@@ -307,9 +268,16 @@ int main(int argc, char const *const *argv) {
     if (!path) strerr_diefu1sys(111, "realpath failed") ;
     if (!*path) strerr_dief(111, "realpath returned an empty path") ;
     if ('/' != *path)
-      strerr_warn("realpath gave a relative path: '", path, "'");
+      strerr_warn("realpath gave a relative path: '", path, "'") ;
   }
-  static struct parsed parsed = {NULL, {{base_n, "base"},{dir_n,"dirname"},{0}}};
-  doparse(path, *rules, &parsed);
+  static struct parsed parsed = {NULL, {{base_n, "base"},{dir_n,"dirname"},{0}}} ;
+  doparse(path, *rules, &parsed) ;
+  for (struct parsed_field const *f = &parsed.fields[0] ; f->part ;++f) {
+    printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ;
+    puts(f->name) ; putchar('=') ; puts(f->value) ; putchar('\n') ;
+
+  } ;
+
+
 }
 

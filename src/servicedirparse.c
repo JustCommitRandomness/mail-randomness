@@ -1,14 +1,16 @@
 #define COMMA ,
 #define N(...) X(__VA_ARGS__)
 #define PARSEPART 	X(zero,,)			\
-  X(dir,,) X(basename,,) X(base,,)			\
+    X(log, char const *name;	\
+      , .log.name = "log")				\
+    X(dir,,) X(basename,,) X(base,,)			\
     X(exts, int count ; char *start ;			\
       , .exts.next = exts_n, .exts.start = NULL )	\
     N(protopart,,) N(verpart,,)				\
     N(netpart,,) N(prefixpart,,) N(addrpart,,)		\
     N(portpart,,) N(topart,,)				\
     N(invalid,, .invalid.next = exts_n )		\
-    X(parts_END,,)
+    X(parts_END, enum_parts from ;,)
 #define X(part,...) part ## _n ,
 typedef enum { PARSEPART part_NULL } enum_parts;
 #undef X
@@ -57,9 +59,9 @@ struct parsed_field {
   enum_parts part;
   char const *name;
   short len;
-  char const *const *value;
+  char *value;
 };
-struct parsed { char const *const join; struct parsed_field const fields[]; };
+struct parsed { char const *const join; struct parsed_field fields[]; };
 typedef enum { Separator, EndCmd, NetPart, RulesMAX} enum_rules ;
 typedef char const *Rules[RulesMAX];
 Rules const* rules = NULL;
