@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use strict; use warnings;
 use Cwd 'getcwd';
-my ($base, $where, $is_log);
+my ($base, $where, $is_log, %netconf);
 {
   my $cwd = getcwd();
   $is_log =  ($cwd =~ s!/log/?$!!) ? 'log.' : '';
@@ -21,12 +21,13 @@ my ($base, $where, $is_log);
   my $all;
   my ($tcp, $udp,  $pname, $topname, $long, $short);
   my $proto = 'tcp';
-  ($cwd, $tcp, $udp,$ENV{'IP'},$ENV{'PREFIX'},
-  $ENV{'PORT'}, $pname,$ENV{'TOPORT'}, $topname)
-    = @cwd if @cwd = $cwd =~ m/.*(?:[-:_]$M_netspec)$/;
- $ENV{'PROTO'} = 'UDP' if $udp;
- $ENV{'PORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $pname;
- $ENV{'TOPORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $topname;
+  ($cwd, $netconf{'PROTO'}, $netconf{'IP'}, $netconf{'PREFIX'},
+   $netconf{'PORT'}, $pname, $netconf{'TOPORT'}, $topname)
+      = @cwd if @cwd = $cwd =~ m/.*(?:[-:_]$M_netspec)$/;
+  $netconf{'PORT'} = getservbyname($pname, $netconf{'PROTO'} // 'tcp')
+      if $pname;
+  $netconf{'TOPORT'} = getservbyname($pname, $netconf{'PROTO'} // 'tcp')
+      if $topname;
   
   ($ENV{'dirname'},$ENV{'basename'}, $long, $short, $all, $cwd)
     = $cwd =~ m!^(.*)/((?:([^_]+)_|([^-]+)-|([^_-]*))(.*))$!;
