@@ -72,13 +72,13 @@ struct parsed *build_parsed(struct_parts *parts) {
     if ((p = &parts[*pp]) && p->part) {
       if (!(tf->name = strdup(p->name)))
 	strerr_diefsys(111, "out of memory duplicating name", p->name) ;
-      tf = &tmpf[++n] ;
       tf->part = p->type ;	/* oh dear, I messed up with the names there */
       if (!(tf->value = malloc(p->len + 1)))
 	strerr_diefsys(111, "out of memory duplicating value", p->part) ;
       memcpy(tf->value, p->part, p->len) ;
       tf->value[p->len] = 0 ;
       tf->len = p->len ;
+      tf = &tmpf[++n] ;
     }
   tmpf[++n].part = 0 ;
   size_t off = offsetof(struct parsed, fields) ;
