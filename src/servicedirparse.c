@@ -1,16 +1,17 @@
 #define COMMA ,
+#define I(...) X(__VA_ARGS__)
 #define N(...) X(__VA_ARGS__)
-#define PARSEPART 	X(zero,,)			\
+#define PARSEPART 	I(zero,,)			\
     X(log, char const *name;	\
       , .log.name = "log")				\
     X(dir,,) X(basename,,) X(base,,)			\
-    X(exts, int count ; char *start ;			\
+    I(exts, int count ; char *start ;			\
       , .exts.next = exts_n, .exts.start = NULL )	\
     N(protopart,,) N(verpart,,)				\
     N(netpart,,) N(prefixpart,,) N(addrpart,,)		\
     N(portpart,,) N(topart,,)				\
-    N(invalid,, .invalid.next = exts_n )		\
-    X(parts_END, enum_parts from ;,)
+    I(invalid,, .invalid.next = exts_n )		\
+    I(parts_END, enum_parts from ;,)
 #define X(part,...) part ## _n ,
 typedef enum { PARSEPART part_NULL } enum_parts;
 #undef X
@@ -54,7 +55,18 @@ struct_parts parts[] = { PARSEPART {0} };
     uint32_t unimplemented = 0 PARSEPART;
 #undef X
 #undef N
+#define X(part,...) part ## _n ,
+#define N(...)
+#undef I
+#define I(...)
+enum_parts const public_parts[] = { PARSEPART 0 } ;
+#undef X
+#undef N
+#undef I
 #define N(...) X(__VA_ARGS__)
+#define I(...) X(__VA_ARGS__)
+
+
 struct parsed_field {
   enum_parts part;
   char const *name;

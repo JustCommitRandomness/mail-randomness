@@ -62,7 +62,60 @@ int nextpartis(enum_parts *cp, enum_parts _part, struct_parts (*parts)[], int i,
   return 0 ;
 }
 
+struct parsed *build_parsed(struct_parts *parts) {
+  int n ;
+  struct parsed_field tmpf[parts_END_n] ;
+  struct parsed_field *tf ;
+  enum_parts const *pp ;
+  struct_parts *p ;
+  for ( n = 0, tf = tmpf, pp = public_parts ; *pp ; ++pp )
+    if ((p = &parts[*pp]) && p->part) {
+      tf->part = p->type ;	/* oh dear, I messed up with the names there */
+      if (!(tf->value = malloc(p->len + 1)))
+	strerr_diefsys(111, "out of memory duplicating value", p->part) ;
+      memcpy(tf->value, p->part, p->len) ;
+      tf->value[p->len] = 0 ;
+      tf->len = p->len ;
+      if (!(tf->name = strdup(p->name)))
+	strerr_diefsys(111, "out of memory duplicating name", p->name) ;
+      tf = &tmpf[++n] ;
+    }
+  tmpf[++n].part = 0 ;
+  size_t off = offsetof(struct parsed, fields) ;
+  size_t f_size = n * sizeof(struct parsed_field) ;
+  struct parsed *pr = malloc( off + f_size ) ;
+  if (!pr)
+    strerr_diefsys(111, "out of memory building result set") ;
+  struct parsed_field const *from = tmpf ;
+  memcpy(pr->fields, from, f_size) ;
+  return pr ;
+}
 
+void populate_parsed(struct parsed *parsed, struct_parts *parts) {
+  /* NB parsed->fields[*].len is different coming in as going out
+   * Inwards it is the length of the buffer *in(cluding a terminating NULL
+   * Outwards it is the length *ex*cluding the terminating NULL
+   */
+  struct parsed_field *ret ;
+  enum_parts id ;
+  struct_parts const *part ; 	/* you can't touch this */
+  for (ret = &parsed->fields[0] ; (id = ret->part) ; ++ret) {
+    part = &parts[id] ;
+    if (part->part) {
+      if (ret->value) {
+	strncpy(ret->value, part->part, ret->len) ;
+	if (part->len < ret->len) ret->len = part->len ;
+	ret->value[ret->len - 1] = NUL ;
+      } else {
+	if (ret->len--) ret->len = (part->len < ret->len) ? part->len : ret->len ;
+	else ret->len = part->len ;
+	ret->value = strndup(part->part, ret->len) ;
+	ret->value[ret->len] = 0 ;
+      }
+      if (!ret->name) ret->name = part->name ;
+    } else ret->len = 0 ;
+  }
+}
 struct parsed *doparse(char *const path, Rules const rules, struct parsed *parsed) {
   char *pcpy = strdup(path) ;
   if (!pcpy) strerr_diefu2sys(111, "strdup failed to copy", path) ;
@@ -209,25 +262,15 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
   for (enum_parts j=0 ; curpart >= j ; j++)
     printf("parts[%u](%s) = '%s'[%u]\n",
 	   j, parts[j].name, parts[j].part, parts[j].len) ;
-  {
-    struct parsed_field *ret ;
-    enum_parts id ;
-    struct_parts const *part ; 	/* you cant touch this */
-    for (ret = &parsed->fields[0] ; (id = ret->part) ; ++ret) {
-      part = &parts[id] ;
-      if (part->part) {
-	if (ret->value) {
-	  strncpy(ret->value, part->part, ret->len) ;
-	  if (part->len <= ret->len) ret->len = part->len ;
-	  else ret->value[ret->len - 1] = NUL ;
-	} else {
-	  ret->value = strdup(part->part) ;
-	  ret->len = part->len ;
-	}
-	if (!ret->name) ret->name = part->name ;
-      }
-    }
+
+  /* populate return structure */
+  if (!parsed) {
+    struct parsed *retparsed = build_parsed(parts) ;
+    free(pcpy) ;
+    return retparsed ;
   }
+  populate_parsed(parsed,parts) ;
+  free(pcpy) ;
   return parsed ;
 }
 
@@ -270,14 +313,19 @@ int main(int argc, char const *const *argv) {
     if ('/' != *path)
       strerr_warn("realpath gave a relative path: '", path, "'") ;
   }
-  static struct parsed parsed = {NULL, {{base_n, "base"},{dir_n,"dirname"},{0}}} ;
-  doparse(path, *rules, &parsed) ;
-  for (struct parsed_field const *f = &parsed.fields[0] ; f->part ;++f) {
+  /* static struct parsed parsed = {NULL, {{base_n, "base"}, */
+  /* 					{dir_n,"dirname"}, */
+  /* 					{basename_n}, */
+  /* 					{exts_n}, */
+  /* 					{0}}} ; */
+  /* for (struct parsed_field const *f = &parsed.fields[0] ; f->part ;++f) { */
+  /*   printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ; */
+  /*   puts(f->name) ; putchar('=') ; puts(f->value) ; putchar('\n') ; */
+  /* } ; */
+  struct parsed *parsed = doparse(path, *rules, NULL) ;
+  for (struct parsed_field const *f = &parsed->fields[0] ; f->part ;++f) {
     printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ;
     puts(f->name) ; putchar('=') ; puts(f->value) ; putchar('\n') ;
-
   } ;
-
-
 }
 
