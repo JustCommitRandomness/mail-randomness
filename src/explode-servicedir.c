@@ -70,15 +70,15 @@ struct parsed *build_parsed(struct_parts *parts) {
   struct_parts *p ;
   for ( n = 0, tf = tmpf, pp = public_parts ; *pp ; ++pp )
     if ((p = &parts[*pp]) && p->part) {
+      if (!(tf->name = strdup(p->name)))
+	strerr_diefsys(111, "out of memory duplicating name", p->name) ;
+      tf = &tmpf[++n] ;
       tf->part = p->type ;	/* oh dear, I messed up with the names there */
       if (!(tf->value = malloc(p->len + 1)))
 	strerr_diefsys(111, "out of memory duplicating value", p->part) ;
       memcpy(tf->value, p->part, p->len) ;
       tf->value[p->len] = 0 ;
       tf->len = p->len ;
-      if (!(tf->name = strdup(p->name)))
-	strerr_diefsys(111, "out of memory duplicating name", p->name) ;
-      tf = &tmpf[++n] ;
     }
   tmpf[++n].part = 0 ;
   size_t off = offsetof(struct parsed, fields) ;
@@ -116,6 +116,7 @@ void populate_parsed(struct parsed *parsed, struct_parts *parts) {
     } else ret->len = 0 ;
   }
 }
+
 struct parsed *doparse(char *const path, Rules const rules, struct parsed *parsed) {
   char *pcpy = strdup(path) ;
   if (!pcpy) strerr_diefu2sys(111, "strdup failed to copy", path) ;
@@ -134,7 +135,7 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
   struct_parts *part ;
   SETCURPART(start_n) ;
   for (i = 0 ; curpart < parts_END_n ; i++, part->part && part->len++) {
-    char p, UP, pn, pp ;
+    char p, pn, pp ;
     goto rewound ;
   unwind:
     i -= unwind ;
@@ -242,7 +243,7 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
     continue ;
  reset: /*damn, a subpath*/
     SETCURPART(start_n) ;
-    for (int i = start_n ; part_NULL > i ; ++i) {
+    for (int i = start_n ; part_MAX > i ; ++i) {
       parts[i].part = NULL ;
       parts[i].len = 0 ;
       /* NB. modifications to pcpy haven't been reset, but the path part
