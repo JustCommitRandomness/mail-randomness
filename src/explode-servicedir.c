@@ -26,27 +26,31 @@
  */
 
 const char* validatepart(struct_parts (*parts)[], enum_parts p, uint i) {
-  struct_parts part = (*parts)[p] ;
-  switch (p) {
+  struct_parts *part = &(*parts)[p] ;
 
+  switch (p) {
   case basename_n:
-    break ;
   case base_n:
+    break ;
+  case exts_n:
     {
-      (*parts)[basename_n].part = part.part ;
-      (*parts)[basename_n].len = part.len ;
-      { const char *c = validatepart(parts, basename_n, i) ; if (c) return c ; }
+      struct_parts *base = &(*parts)[base_n] ;
+      if (base->len) {
+	part->part = base->part ;
+	part->len += base->len ;
+      }
     }
     break ;
   case invalid_n:
-    strerr_dief(100, part.part) ;
+    strerr_dief(100, part->part) ;
   default:
-    strerr_warn("unhandled ", part.name) ;
+    strerr_warn("unhandled ", part->name) ;
   }
   return NULL ;
 }
 
-int nextpartis(enum_parts *cp, enum_parts _part, struct_parts (*parts)[], int i, char n) {
+int nextpartis(enum_parts *const cp, struct_parts  **const partp, enum_parts _part,
+	       struct_parts (*parts)[], int i, char n) {
   if (parts_END_n == _part) (*parts)[parts_END_n].parts_END.from = *cp ;
   do {
     if ((*parts)[*cp].part &&
@@ -58,6 +62,7 @@ int nextpartis(enum_parts *cp, enum_parts _part, struct_parts (*parts)[], int i,
     ++(*cp) ;
     if (_part < *cp) *cp = _part ;
   } while ( _part > *cp) ;
+  *partp = &(*parts)[*cp] ;
   if (n || invalid_n == *cp) return 1 ;
   return 0 ;
 }
@@ -80,7 +85,7 @@ struct parsed *build_parsed(struct_parts *parts) {
       tf->len = p->len ;
       tf = &tmpf[++n] ;
     }
-  tmpf[++n].part = 0 ;
+  tmpf[n++].part = 0 ;
   size_t off = offsetof(struct parsed, fields) ;
   size_t f_size = n * sizeof(struct parsed_field) ;
   struct parsed *pr = malloc( off + f_size ) ;
@@ -125,7 +130,8 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
   }
   parts[dir_n].part = path ;
 
-#define NEXTPARTIS(_part) { if(nextpartis(&curpart,_part,&parts,i,pn))continue ;break ;}
+#define NEXTPARTIS(_part) {\
+    if ( nextpartis(&curpart,&part,_part,&parts,i,pn))continue ; break ; }
 #define NEXTPART NEXTPARTIS(part->access.next)
 #define SETCURPART(_part) part = &parts[curpart = _part]
 
@@ -141,20 +147,21 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
     i -= unwind ;
     parts->len = ( unwind >= part->len )
       ? 0 : part->len - unwind ;
+    parts[basename_n].len = ( unwind >= parts[basename_n].len )
+      ? 0 : parts[basename_n].len - unwind ;
     part->len || ( part->part = NULL ) ;
     unwind = 1 ;
-
   rewound:
-    p = path[i] ;		/* current char */
+
+    if (!(p = path[i])) 	/* current char */
+      NEXTPARTIS(parts_END_n) ;	/* made it to the end! */
     pn = path[i+1] ;		/* look ahead */
     pp = i ? pcpy[i-1] : NUL ;	/* look behind */
 
-    if (!p) NEXTPARTIS(parts_END_n) ;
-
-      /* path componets reset everything. we might have wasted time
-       * processing it, but probably not much longer than strrchr-ing
-       * it first
-       */
+    /* path componets reset everything. we might have wasted time
+     * processing it, but probably not much longer than strrchr-ing
+     * it first
+     */
     if ('/' == p) {
       if (pn) {
 	char const *cmp ;
@@ -162,7 +169,7 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
 	for ( cmp = &path[i+1], ref = parts[log_n].log.name
 	       ; *ref && *ref == *cmp
 	       ; cmp++, ref++, parts[log_n].len++) ;
-	for ( ;'/' == *ref ; ref++) ;
+	for ( ; '/' == *ref ; ref++) ;
 	if (*cmp == *ref) {
 	  parts[log_n].part = &path[i+1] ;
 	  pn = NUL ;
@@ -179,12 +186,20 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
 	goto unwind ;
       }
     }
-    if (invalid_n == curpart) {
-      if (!p) strerr_die(100, "directory name was invalid: ", parts[invalid_n].part) ;
-      else continue ; }/* looking for a / to reset everything	*/
 
+    if (invalid_n == curpart) {	/* looking for a / to reset everything	*/
+      if (!p) strerr_die(100, "directory name was invalid: ", parts[invalid_n].part) ;
+      else continue ;
+    }
+
+    if (parts[basename_n].part)
+      ++parts[basename_n].len ;	/* basename intensifies */
+    else {
+      parts[basename_n].part = &path[i] ;
+      parts[basename_n].len = 1 ;
+    }
     if (strchr(rules[NetPart], p)) {
-      if (netspec_n > curpart) { /* we are now  */
+      if (netspec_n > curpart) {/* first time in a netspec */
 	pcpy[i] = '/' ;
 	NEXTPARTIS(netspec_n) ;
       }
@@ -214,23 +229,23 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
     {
       while (unimplemented & curpart) {
 	strerr_warn("skipping ", part->name) ;
-	SETCURPART(curpart+1) ;
+	SETCURPART(curpart + 1) ;
       }
       part = &parts[curpart] ;
     }
-    if (start_n == curpart) {	/* should be base_n */
+    if (base_n == curpart) {
       if (strchr(rules[EndCmd], p)) {
-	pcpy[i] = NUL ;
+	pcpy[i] = '/' ;
 	NEXTPART ;
       }
       if (!part->part)
-	part->part = &path[i] ;
+	part->part = &pcpy[i] ;
       continue ;
     }
 
     if (exts_n == curpart) {
       if (strchr(rules[Separator], p)) {
-	pcpy[i] = NUL ;
+	pcpy[i] = '/' ;
 	NEXTPART ;
       }
       if (!part->part) {
@@ -242,8 +257,7 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
     strerr_warn("continuring for ", part->name) ;
     continue ;
  reset: /*damn, a subpath*/
-    SETCURPART(start_n) ;
-    for (int i = start_n ; part_MAX > i ; ++i) {
+    for (int i = basename_n ; part_MAX > i ; ++i) {
       parts[i].part = NULL ;
       parts[i].len = 0 ;
       /* NB. modifications to pcpy haven't been reset, but the path part
@@ -251,19 +265,26 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
        */
     }
     pcpy[i] = NUL ;
-    curpart = start_n ;
+    SETCURPART(start_n) ;
     continue ;
   } /* for */
   if (parts_END_n != curpart)
     strerr_warn("Unexpected exit") ;
   else SETCURPART(part->parts_END.from) ;
+  if (!parts[dir_n].part)	{/* we must have a dir, but / will be NUL */
+    parts[dir_n].part = "///" ;
+    /* user may append / to dir, and in POSIX // at the root is special,
+     * ///+ is collapsed to / making everything awesome.
+     */
+    parts[dir_n].len = 3 ;
+  }
 
-
-  printf("we escaped at position %u: %d\n", i, curpart) ;
+#ifdef DEBUG
   for (enum_parts j=0 ; curpart >= j ; j++)
     printf("parts[%u](%s) = '%s'[%u]\n",
 	   j, parts[j].name, parts[j].part, parts[j].len) ;
-
+#endif
+  
   /* populate return structure */
   if (!parsed) {
     struct parsed *retparsed = build_parsed(parts) ;
@@ -277,14 +298,19 @@ struct parsed *doparse(char *const path, Rules const rules, struct parsed *parse
 
 int main(int argc, char const *const *argv) {
   char *path = NULL ;
+  struct parsed *parsed = NULL ;
   {
     const char *av = argc && argv ? strrchr(argv[0], '/') : "/<undef>" ;
     av = av ? av+1 : argv[0] ? argv[0] : "<NULL>" ;
-    if (strcmp("pwd-to-subpath", argv[0])) rules = &tosubpath ;
-    else if (strcmp("pwd-to-ip", argv[0])) rules = &toip ;
+    if (!strcmp("pwd-to-subpath", av)) {
+      static struct parsed p = {NULL, {{exts_n}, {base_n}, {0}}} ;
+      parsed = &p ;
+      rules = &tosubpath ;
+    }
+    else if (!strcmp("pwd-to-ip", argv[0])) rules = &toip ;
     else rules = &newstyle ;
   }
-  if (*newstyle) {
+  if (&newstyle == rules) {
     subgetopt l = SUBGETOPT_ZERO ;
     for ( ; ; )
     {
@@ -323,10 +349,20 @@ int main(int argc, char const *const *argv) {
   /*   printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ; */
   /*   puts(f->name) ; putchar('=') ; puts(f->value) ; putchar('\n') ; */
   /* } ; */
-  struct parsed *parsed = doparse(path, *rules, NULL) ;
-  for (struct parsed_field const *f = &parsed->fields[0] ; f->part ;++f) {
-    printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ;
-    puts(f->name) ; putchar('=') ; puts(f->value) ; putchar('\n') ;
-  } ;
+  parsed = doparse(path, *rules, parsed) ;
+  {
+    struct parsed_field const *f ;
+      if (&tosubpath == rules) {
+	for(f = parsed->fields ; f->part ; f++ )
+	  if (f->len) {
+	    puts(f->value) ;
+	    exit(0) ;
+	  }
+	strerr_die(101, "didn't find a subpath in ", path) ;
+      }
+    for ( f = &parsed->fields[0] ; f->part ; ++f) {
+      printf("asked for %s(%u) got %u\n", f->name, f->part, f->len) ;
+      puts(f->name) ; putchar('=') ; puts(f->value ? f->value : "<null>") ;
+    }
+  }
 }
-

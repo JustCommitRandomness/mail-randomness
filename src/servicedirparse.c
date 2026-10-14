@@ -5,7 +5,7 @@
     X(log, char const *name;	\
       , .log.name = "log")				\
     X(dir,,) X(basename,,) X(base,,)			\
-    I(exts, int count ; char *start ;			\
+    X(exts, int count ; char *start ;			\
       , .exts.next = exts_n, .exts.start = NULL )	\
     N(protopart,,) N(verpart,,)				\
     N(netpart,,) N(prefixpart,,) N(addrpart,,)		\
