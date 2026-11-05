@@ -1,0 +1,29 @@
+#!/command/execlineb
+/command/fdmove -c 2 1
+
+
+/command/s6-envdir -I ENV
+importas -SD  /var/unbound/etc		ETCROOT
+/command/explode-servicedir
+importas -i			there	where
+importas -SuD ${ETCROOT}/${there} 	CONF
+
+ifelse { [ -f ${CONF} ] }
+{
+	foreground { /bin/echo /usr/sbin/unbound -c $CONF }
+	/usr/sbin/unbound -c $CONF
+}
+foreground {
+	foreground { mkdir -p ${CONF} }
+	redirfd -w 1 ${CONF}/gen
+	importas -SD 127.0.0.1 IP
+	importas -S PORT
+	/bin/echo "include: "${ETCROOT}"/unbound.common
+	server:
+	ip-address: ${IP}
+	port: ${PORT}
+	"
+}
+foreground { /bin/echo /usr/sbin/unbound -c ${CONF}/gen }
+/usr/sbin/unbound -c ${CONF}/gen
+
