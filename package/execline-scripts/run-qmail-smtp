@@ -1,10 +1,10 @@
 #!/command/execlineb
 fdmove -c 2 1
-export PATH /command:/bin:/usr/bin
+export PATH /command:/var/qmail/bin
 
 ifelse -nX {
 	forx -o 0 -E ctrlfile { rcpthosts databytes }
-	ifelse { [ -f /var/qmail/control/${ctrlfile} ] }
+	ifelse { eltest -f /var/qmail/control/${ctrlfile} }
 	{ exit 0 }
 	foreground { echo /var/qmail/control/${ctrlfile} must exist }
 	exit 125
@@ -34,7 +34,7 @@ multisubstitute {
 	importas -uD 2		TCPv		TCPVERBOSITY
 	importas -uD 1		TCPav		TCPACESSVERBOSITY
 	importas -uD 5000	AccessTimout	ACCESSTIMEOUT
-	importas -uD /package/mail/notqmail/bin
+	importas -uD /var/qmail/bin
 				LaunchPath	LAUNCHPATH
 }
 
