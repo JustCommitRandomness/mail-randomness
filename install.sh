@@ -45,7 +45,7 @@ do
     )
   fi
 done
-for dir in perllib
+for dir in perllib confs
 do
   if [ -d package/"${dir}" ]
   then
