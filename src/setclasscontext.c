@@ -44,22 +44,21 @@ int main (int argc, char const *const *argv)
     argc -= l.ind ; argv += l.ind ;
   }
   if (!flags) {
-    if (ignore) goto end ;
     strerr_warn("nothing to set, defaulting to limits") ;
     flags = LOGIN_SETRESOURCES;
   }
-  const char *class = env ? getenv(*argv) : *argv ;
+  char const *class = env ? getenv(*argv) : *argv ;
+  if (unset && env) unsetenv(*argv) ;
+  argc--; argv++ ;
   {
     if (!class) {
       if (ignore) goto end ;
-      strerr_die(101, "environment variable '", *argv, "' not set") ;
+      strerr_die(100, "environment variable '", *argv, "' not set") ;
     }
     if (!*class) class = "default" ;
-    if (unset && env) unsetenv(*argv) ;
-    argc--; argv++ ;
     if (setclasscontext(class, flags)) {
       if (ignore) goto end ;
-      strerr_die(102, "setclasscontext failed: ", strerror(errno)) ;
+      strerr_die(125, "setclasscontext failed: ", strerror(errno)) ;
     }
   }
 
