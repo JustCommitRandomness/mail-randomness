@@ -58,7 +58,7 @@ server:
 
 remote-control:
 	control-enable: no
-	control-interface: /dev/null
+
 
 # Use an upstream forwarder (recursive resolver) for some or all zones.
 #

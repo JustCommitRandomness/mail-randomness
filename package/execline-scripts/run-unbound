@@ -1,29 +1,47 @@
 #!/command/execlineb
 /command/fdmove -c 2 1
-
-
 /command/s6-envdir -I ENV
-importas -SD  /var/unbound/etc		ETCROOT
 /command/explode-servicedir
 importas -i			there	where
-importas -SuD ${ETCROOT}/${there} 	CONF
-
-ifelse { [ -f ${CONF} ] }
+multisubstitute {
+	importas -SD  /var/unbound/etc		ETCROOT
+	importas -SD  /var/run			VARRUN
+}
+multisubstitute {
+	importas -SuD ${ETCROOT}/${there} 	CONF
+	importas -SuD ${VARRUN}/${there}	SOCKDIR
+	importas -Sus				UNBOUNDARGS
+}
+ifthenelse { eltest ! -d $SOCKDIR } { mkdir -p $SOCKDIR } { }
+ifelse { eltest -f ${CONF} }
 {
-	foreground { /bin/echo /usr/sbin/unbound -c $CONF }
-	/usr/sbin/unbound -c $CONF
+	foreground { /bin/ln -fs ${CONF} config }
+	foreground { /bin/echo /usr/sbin/unbound -dc $CONF $UNBOUNDARGS }
+	/usr/sbin/unbound -dc $CONF $UNBOUNDARGS
 }
 foreground {
 	foreground { mkdir -p ${CONF} }
+	multisubstitute {
+		importas -S IP
+		importas -S PORT
+		importas -S MSGMEM
+		importas -S RRSETMEM
+	}
 	redirfd -w 1 ${CONF}/gen
-	importas -SD 127.0.0.1 IP
-	importas -S PORT
 	/bin/echo "include: "${ETCROOT}"/unbound.common
-	server:
-	ip-address: ${IP}
-	port: ${PORT}
-	"
+server:
+" "	ip-address:		${IP}
+" "	port:			${PORT}
+" "	msg-cache-size:		${MSGMEM}
+" "	rrset-cache-size:	${RRSETMEM}
+" "
+" "remote-control:
+	control-interface: 	${SOCKDIR}/sock
+	control-enable:		yes
+"
+
 }
-foreground { /bin/echo /usr/sbin/unbound -c ${CONF}/gen }
-/usr/sbin/unbound -c ${CONF}/gen
+foreground { /bin/ln -fs ${CONF}/gen config }
+foreground { /bin/echo /usr/sbin/unbound -dc ${CONF}/gen $UNBOUNDARGS }
+/usr/sbin/unbound -dc ${CONF}/gen $UNBOUNDARGS
 
