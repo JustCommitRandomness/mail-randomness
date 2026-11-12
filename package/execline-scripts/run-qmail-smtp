@@ -18,7 +18,7 @@ s6-envdir -I /etc/qmail/ENV
 s6-envdir -I /etc/${there}/ENV
 
 importas -D _qmaild UidGidUser UIDGIDUSER
-backtick def_qmail_class { id -c $UidGidUser }
+backtick def_qmail_class { /usr/bin/id -c $UidGidUser }
 setclasscontext -L -Eu def_qmail_class
 setclasscontext -I -Eu CLASS
 s6-envuidgid -i ${UidGidUser}

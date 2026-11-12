@@ -59,7 +59,7 @@ foreground {
 		importas -uSD $GID	SOCKET_GID
 	}
 	if -Xn { /usr/sbin/chown ${SOCKET_UID}:${SOCKET_GID} $SOCKET_PATH }
-	${el}fdwap 1 2
+	${el}fdswap 1 2
 	echo Problem calling /usr/sbin/chown \
 		${SOCKET_UID}:${SOCKET_GID} $SOCKET_PATH
 }

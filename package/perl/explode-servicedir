@@ -43,8 +43,8 @@ my ($base, $where, $is_log);
 {
   my $conf = ($ENV{'ETC'}
 	      // join( '/', ( grep {defined} (
-				  ENV{'ETCROOT'} // '/etc',
-				  $ENV{SCANTAG}, $ENV{SCANDIR} ) ) );
+				  $ENV{'ETCROOT'} // '/etc',
+				  $ENV{SCANTAG}, $ENV{SCANDIR} ) ) ) );
   my @myargv = ('/command/s6-envdir', '-I', "$conf/$base/${is_log}ENV");
   push @myargv, ('/command/s6-envdir', '-I', "$conf/$where.${is_log}ENV")
       if $where ne $base;
