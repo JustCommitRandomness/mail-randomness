@@ -12,3 +12,4 @@
 
 #stuff
 *.core
+.gdb*
