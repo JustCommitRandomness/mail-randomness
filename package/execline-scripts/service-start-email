@@ -5,12 +5,14 @@ backtick -n DATE {
 	/bin/date "+Date: %a, %e %b %Y %H:%M:%S %z"
 } 
 getcwd PWD
+importas -D		root				defrcpt	LOGUSER
 multisubstitute {
-	importas -u	DATE				DATE
-	importas -u	ENV				ENV
-	importas -u	PWD				PWD
-	importas -uD	root@localhost			rcpt	NOTIFY_TO
-	importas -uD	/var/qmail/bin/qmail-inject	mail	NOTIFY_MAILCMD
+	importas -uS						DATE
+	importas -uS						ENV
+	importas -uS						PWD
+	importas -uD	$defrcpt			rcpt	NOTIFY_TO
+	importas -uD	/var/qmail/bin/qmail-inject	mailer	NOTIFY_MAILCMD
+	importas -s "\t" 				mailarg NOTIFY_MAILARGS
 }
 heredoc 0 
 
@@ -23,5 +25,5 @@ ${ENV}
 End of notification
 "
 
-$mail $rcpt
+$mailer $mailarg $rcpt
 
