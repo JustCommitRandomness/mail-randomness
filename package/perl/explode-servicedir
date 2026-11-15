@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 use strict; use warnings;
 use Cwd 'getcwd';
-my ($base, $where, $is_log);
+my ($base, $is_log, @parts);
 {
   my $cwd = getcwd();
   $is_log =  ($cwd =~ s!/log/?$!!) ? 'log.' : '';
@@ -19,36 +19,63 @@ my ($base, $where, $is_log);
 
   my @cwd;
   my $all;
-  my ($tcp, $udp,  $pname, $topname, $long, $short);
-  ($tcp, $udp,$ENV{'IP'},$ENV{'PREFIX'},
-  $ENV{'PORT'}, $pname,$ENV{'TOPORT'}, $topname)
+  my ($ip, $prefix, $port, $toport, $tcp, $udp,
+      $pname, $topname, $long, $short);
+  ($tcp, $udp, $ip, $prefix,
+  $port, $pname, $toport, $topname)
     = @cwd if @cwd = $cwd =~ m|.*/.*?(?:$M_netspec)?$|;
- $ENV{'PROTO'} = 'TCP' if $tcp;
- $ENV{'PROTO'} = 'UDP' if $udp;
- $ENV{'PORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $pname;
- $ENV{'TOPORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $topname;
+
+  $ENV{'PROTO'} = 'TCP' if $tcp;
+  $ENV{'PROTO'} = 'UDP' if $udp;
+  $port = getservbyname($pname, $udp ? 'udp' : 'tcp') if $pname;
+  $port = getservbyname($pname, $udp ? 'udp' : 'tcp') if $topname;
+  $ENV{'PORT'} = $port if $port;
+  $ENV{'TOPORT'} = $toport if $toport;
+  $ENV{'PREFIX'} = $prefix if $prefix;
+  $ENV{'IP'} = $ip if $ip;
+  $ENV{'PROTO'} = 'TCP' if $tcp;
+  $ENV{'PROTO'} = 'UDP' if $udp;
+  $ENV{'PORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $pname;
+  $ENV{'TOPORT'} = getservbyname($pname, $tcp ? 'tcp' : 'udp') if $topname;
   
-  ($ENV{'dirname'},$ENV{'basename'}, $long, $short, $all, $cwd)
-    = $cwd =~ m!^(.*)/((?:([^_]+)_|([^-]+)-|([^_-]*))(.*))$!;
-  if ($all) {
-    $where = $base = $all;
-  } else {
-    $base = $long ? $long : $short;
-    @cwd = $cwd =~  m/([^-_]+)/g;
-    $where = join('/', $base, @cwd);
-  }
+  ($ENV{'dirname'}, $ENV{'basename'}) = $cwd =~ m!^(.*)/(.*)$!;
+
+  # pwd* mode splits on both '-' and '_'; new mode splits solely on '_'
+  my $chars = ($0 =~ m{(?:^|/)pwd[^/]*$}) ? '^-_' : '^_';
+
+  ($base, @parts) = $ENV{'basename'} =~ m/([$chars]+)/g;
   $ENV{'base'} = $base;
-  $ENV{'where'} = $where;
 }
 {
   my $conf = ($ENV{'ETC'}
 	      // join( '/', ( grep {defined} (
 				  $ENV{'ETCROOT'} // '/etc',
-				  $ENV{SCANTAG}, $ENV{SCANDIR} ) ) ) );
-  my @myargv = ('/command/s6-envdir', '-I', "$conf/$base/${is_log}ENV");
-  push @myargv, ('/command/s6-envdir', '-I', "$conf/$where.${is_log}ENV")
-      if $where ne $base;
-  print "$conf: ", join(' ', @myargv), "\n" ;
-  push @myargv, @ARGV;
-  exec @myargv;
+				  $ENV{SCANTAG}, $ENV{SCANDIR} ) ) ) )
+      . '/';
+  my @newargv =	( ('s6-envdir', '-I', 'ENV'),
+		  ('s6-envdir', '-I', "$conf$base/${is_log}ENV"));
+  
+  my $w = $base;
+  my $suffix = ".${is_log}ENV";
+  foreach (@parts) {
+      $w .= "/$_";
+      push @newargv, 's6-envdir', '-I', $conf . $w . $suffix ;
+  }
+  $ENV{'where'} = $w;
+
+  if (0 < @ARGV &&  $0 !~ m:/run$: ) {
+    push @newargv, @ARGV;
+  } else {
+    my $prefix = $ENV{'Runscripts'} || 'run-';
+    if ($is_log) {
+	my $logger = $prefix . $is_log . $base;
+        push @newargv, -e  $logger ? $logger : $prefix . "log";
+    } else {
+        push @newargv, $prefix . $base;
+    }
+  }
+  print "$conf: '", join("' '", @newargv), "'\n" ;
+      
+  exec @newargv;
+  exit ($!{ENOENT} ? 127 : 126);
 }
